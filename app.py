@@ -20,6 +20,10 @@ st.set_page_config(page_title="Assistente de Diagnóstico", page_icon="🔧", la
 # APENAS PARA USO LOCAL NO PC (Deixa vazio "" se fores enviar o código para o GitHub!)
 CHAVE_LOCAL_FIXA = ""
 
+# Pasta onde ficam guardados os manuais fixos
+PASTA_MANUAIS = "manuais"
+os.makedirs(PASTA_MANUAIS, exist_ok=True)
+
 # Cache global em memória (seguro para múltiplas threads fora do st.session_state)
 CACHE_TRADUCOES = {}
 
@@ -105,7 +109,7 @@ def limpar_caracteres_pdf(texto):
     return texto.encode("latin-1", "ignore").decode("latin-1")
 
 # ---------------------------------------------------------
-# FUNÇÕES CORE
+# FUNÇÕES DE GESTÃO DE MANUAIS FIXOS E CORE
 # ---------------------------------------------------------
 def obter_chave_oculta():
     """Procura a API Key escondida no código local, nos Secrets do Streamlit ou variáveis de sistema."""
@@ -118,9 +122,23 @@ def obter_chave_oculta():
         pass
     return os.environ.get("GROQ_API_KEY", "").strip()
 
-def processar_pdf(ficheiro):
-    """Extrai o texto do PDF e traduz automaticamente para Português se estiver noutro idioma."""
-    doc = fitz.open(stream=ficheiro.read(), filetype="pdf")
+def listar_manuais_fixos():
+    """Procura todos os ficheiros PDF na pasta 'manuais/' e na raiz do projeto."""
+    manuais = {}
+    # 1. Procura na pasta dedicada 'manuais/'
+    if os.path.exists(PASTA_MANUAIS):
+        for f in sorted(os.listdir(PASTA_MANUAIS)):
+            if f.lower().endswith(".pdf"):
+                manuais[f] = os.path.join(PASTA_MANUAIS, f)
+    # 2. Procura na raiz do repositório (caso tenhas subido o PDF direto para o GitHub)
+    for f in sorted(os.listdir(".")):
+        if f.lower().endswith(".pdf") and f not in manuais:
+            manuais[f] = f
+    return manuais
+
+def processar_bytes_pdf(pdf_bytes):
+    """Extrai o texto dos bytes do PDF e traduz automaticamente para Português se estiver noutro idioma."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     textos_originais = []
     for num_pagina in range(len(doc)):
         texto = doc[num_pagina].get_text("text").strip()
@@ -128,8 +146,7 @@ def processar_pdf(ficheiro):
             texto = "[Página sem texto detetável, apenas esquemas/imagens]"
         textos_originais.append(texto)
         
-    ficheiro.seek(0)
-    st.session_state.pdf_bytes = ficheiro.read()
+    st.session_state.pdf_bytes = pdf_bytes
     st.session_state.cache_imagens = {}
     st.session_state.pagina_ativa = 1
     
@@ -165,21 +182,16 @@ def gerar_indice_bm25(textos):
     return BM25Okapi(corpus_tokenizado)
 
 def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=4):
-    """
-    Combina a página que o utilizador está a ler no momento (ou que citou na pergunta)
-    com as páginas mais relevantes de todo o manual encontradas pelo BM25.
-    """
+    """Combina a página atual em leitura com as páginas mais relevantes do manual."""
     total_pags = len(textos)
     paginas_alvo = []
 
-    # 1. Verifica se o técnico mencionou explicitamente uma página na pergunta (ex: "página 21")
     match_pag_pergunta = re.search(r'p[áa]g(?:ina)?\.?\s*(\d+)', sintoma, re.IGNORECASE)
     if match_pag_pergunta:
         pag_citada = int(match_pag_pergunta.group(1))
         if 1 <= pag_citada <= total_pags:
             paginas_alvo.append(pag_citada)
 
-    # 2. Pesquisa em todo o manual com BM25
     sintoma_limpo = re.sub(r'[^\w\s]', ' ', sintoma.lower())
     tokenized_query = sintoma_limpo.split()
     scores = bm25.get_scores(tokenized_query)
@@ -191,29 +203,27 @@ def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=
             if num_p not in paginas_alvo:
                 paginas_alvo.append(num_p)
 
-    # 3. Inclui SEMPRE a página que o técnico tem aberta no ecrã para perguntas de seguimento
     if pagina_atual and (1 <= pagina_atual <= total_pags):
         if not paginas_alvo:
-            # Se a pergunta não tiver palavras-chave novas, a página aberta passa a ser a principal
             paginas_alvo.append(pagina_atual)
         elif pagina_atual not in paginas_alvo:
-            # Insere a página aberta logo no início para a IA não perder o contexto visual do técnico
             paginas_alvo.insert(0, pagina_atual)
 
     if not paginas_alvo:
         return "", []
 
     contexto = ""
-    for num_p in paginas_alvo[:5]:  # Envia até 5 páginas completas do manual para dar contexto máximo
+    for num_p in paginas_alvo[:5]:
         texto_limpo = re.sub(r'\n+', '\n', textos[num_p - 1])
         etiqueta = " (PÁGINA ATUALMENTE ABERTA PELO TÉCNICO)" if num_p == pagina_atual else ""
         contexto += f"\n\n--- PÁGINA {num_p}{etiqueta} ---\n{texto_limpo}"
 
     return contexto, paginas_alvo
 
-def extrair_imagem_pagina(num_pagina, traduzir_visualmente=True):
-    """Gera a imagem da página e substitui textos estrangeiros por Português diretamente na imagem."""
-    chave_cache = f"{num_pagina}_{traduzir_visualmente}"
+def extrair_imagem_pagina(num_pagina, traduzir_visualmente=True, nivel_zoom=3.0):
+    """Gera a imagem da página com o nível de Zoom escolhido e tradução visual opcional."""
+    nome_doc = st.session_state.ultimo_pdf_nome or "doc"
+    chave_cache = f"{nome_doc}_{num_pagina}_{traduzir_visualmente}_{nivel_zoom}"
     if chave_cache in st.session_state.cache_imagens:
         return st.session_state.cache_imagens[chave_cache]
 
@@ -268,13 +278,28 @@ def extrair_imagem_pagina(num_pagina, traduzir_visualmente=True):
         except Exception:
             pass
 
-    matriz_zoom = fitz.Matrix(2.0, 2.0)
+    matriz_zoom = fitz.Matrix(nivel_zoom, nivel_zoom)
     pix = pagina.get_pixmap(matrix=matriz_zoom)
     imagem_bytes = pix.tobytes("png")
     img_final = Image.open(io.BytesIO(imagem_bytes))
     
     st.session_state.cache_imagens[chave_cache] = img_final
     return img_final
+
+def recortar_quadrante(img, zona):
+    """Permite aplicar lupa num quadrante específico do esquema elétrico para ler letras pequenas."""
+    largura, altura = img.size
+    if zona == "Esquerda Superior":
+        return img.crop((0, 0, int(largura * 0.55), int(altura * 0.55)))
+    elif zona == "Direita Superior":
+        return img.crop((int(largura * 0.45), 0, largura, int(altura * 0.55)))
+    elif zona == "Esquerda Inferior (Bornes/Cabos)":
+        return img.crop((0, int(altura * 0.45), int(largura * 0.55), altura))
+    elif zona == "Direita Inferior (Bornes/Legenda)":
+        return img.crop((int(largura * 0.45), int(altura * 0.45), largura, altura))
+    elif zona == "Centro Ampliado":
+        return img.crop((int(largura * 0.2), int(altura * 0.2), int(largura * 0.8), int(altura * 0.8)))
+    return img
 
 def listar_modelos_chat_groq(api_key):
     """Obtém apenas modelos de conversação robustos."""
@@ -320,7 +345,7 @@ def listar_modelos_chat_groq(api_key):
     return modelos_filtrados
 
 def gerar_resposta_groq(api_key, prompt_sistema, historico_recente, prompt_utilizador):
-    """Gera a resposta enviando também o histórico recente da conversa para manter o contexto."""
+    """Gera a resposta enviando também o histórico recente da conversa."""
     client = Groq(api_key=api_key)
     modelos = listar_modelos_chat_groq(api_key)
     ultimo_erro = ""
@@ -354,56 +379,107 @@ st.title("🔧 Assistente MGC - Manuais")
 chave_configurada = obter_chave_oculta()
 
 with st.sidebar:
-    st.header("Manuais da Máquina")
+    st.header("📚 Manuais da Máquina")
     
     if chave_configurada:
         api_key = chave_configurada
     else:
         api_key = st.text_input("Groq API Key", type="password")
         st.divider()
-        
-    ficheiro_pdf = st.file_uploader("Carregar Manual da Máquina (PDF)", type="pdf")
+
+    # 1. LISTA DE MANUAIS FIXOS
+    manuais_disponiveis = listar_manuais_fixos()
+    opcoes_select = list(manuais_disponiveis.keys())
     
-    if ficheiro_pdf and ficheiro_pdf.name != st.session_state.ultimo_pdf_nome:
+    manual_escolhido_nome = None
+    bytes_para_processar = None
+
+    if opcoes_select:
+        manual_escolhido_nome = st.selectbox(
+            "Selecionar Manual Fixo:",
+            options=opcoes_select,
+            index=0
+        )
+
+    # 2. CARREGAR NOVO MANUAL E GUARDAR NA LISTA FIXA
+    with st.expander("➕ Adicionar / Carregar outro PDF"):
+        ficheiro_upload = st.file_uploader("Escolher ficheiro PDF", type="pdf")
+        if ficheiro_upload is not None:
+            caminho_guardar = os.path.join(PASTA_MANUAIS, ficheiro_upload.name)
+            # Guarda automaticamente na pasta 'manuais/' para ficar fixo
+            if not os.path.exists(caminho_guardar):
+                with open(caminho_guardar, "wb") as f_out:
+                    f_out.write(ficheiro_upload.getbuffer())
+                st.success(f"'{ficheiro_upload.name}' guardado na lista fixa!")
+                st.rerun()
+            else:
+                manual_escolhido_nome = ficheiro_upload.name
+                bytes_para_processar = ficheiro_upload.getvalue()
+
+    # Se selecionou um manual fixo da lista, lê do disco
+    if manual_escolhido_nome and bytes_para_processar is None and manual_escolhido_nome in manuais_disponiveis:
+        with open(manuais_disponiveis[manual_escolhido_nome], "rb") as f_in:
+            bytes_para_processar = f_in.read()
+
+    # Reindexa automaticamente quando muda de manual
+    if manual_escolhido_nome and manual_escolhido_nome != st.session_state.ultimo_pdf_nome:
         st.session_state.pdf_processado = False
-        st.session_state.ultimo_pdf_nome = ficheiro_pdf.name
-    
-    if ficheiro_pdf and not st.session_state.pdf_processado and api_key:
-        with st.spinner("A ler e a indexar o manual..."):
-            st.session_state.textos_paginas = processar_pdf(ficheiro_pdf)
+        st.session_state.ultimo_pdf_nome = manual_escolhido_nome
+
+    if bytes_para_processar and not st.session_state.pdf_processado and api_key:
+        with st.spinner(f"A indexar '{manual_escolhido_nome}'..."):
+            st.session_state.textos_paginas = processar_bytes_pdf(bytes_para_processar)
             st.session_state.bm25_index = gerar_indice_bm25(st.session_state.textos_paginas)
             listar_modelos_chat_groq(api_key)
             st.session_state.pdf_processado = True
-            
+
     if st.session_state.pdf_processado:
         total_pags = len(st.session_state.textos_paginas)
         idioma_det = st.session_state.idioma_manual.upper()
-        st.success(f"Manual pronto! ({total_pags} páginas)")
+        st.success(f"Ativo: {st.session_state.ultimo_pdf_nome} ({total_pags} págs)")
         
         manual_estrangeiro = not st.session_state.idioma_manual.startswith("pt")
         if manual_estrangeiro:
-            st.info(f"🌐 Idioma original: {idioma_det} (Traduzido automaticamente para PT)")
-        
-        traduzir_img_op = st.checkbox(
-            "Traduzir textos na imagem para Português",
-            value=manual_estrangeiro,
-            help="Ativa automaticamente quando o manual não está em Português."
-        )
+            st.info(f"🌐 Idioma original: {idioma_det} (Traduzido para PT)")
         
         st.divider()
+        st.subheader("🔍 Visualização e Zoom")
+        
+        nivel_zoom = st.slider(
+            "Nitidez / Zoom do Esquema (DPI):",
+            min_value=2.0,
+            max_value=4.5,
+            value=3.5,
+            step=0.5,
+            help="Aumenta a resolução para ler números de bornes e cabos pequenos."
+        )
+        
+        traduzir_img_op = st.checkbox(
+            "Traduzir textos na imagem para PT",
+            value=manual_estrangeiro
+        )
+        
         pag_selecionada = st.number_input(
             "Página em leitura / foco:",
             min_value=1,
             max_value=total_pags,
             value=st.session_state.pagina_ativa or 1,
-            step=1,
-            help="A IA terá sempre em conta a página que estás a ler, além de pesquisar no resto do manual."
+            step=1
         )
         st.session_state.pagina_ativa = pag_selecionada
+        
+        st.divider()
+        # 3. BOTÃO DE LIMPAR CONVERSA
+        if st.button("🗑️ Limpar Conversa", use_container_width=True, type="secondary"):
+            st.session_state.mensagens = []
+            st.rerun()
     else:
+        nivel_zoom = 3.5
         traduzir_img_op = False
+        if not opcoes_select:
+            st.info("Abre '➕ Adicionar / Carregar outro PDF' acima para guardares o primeiro manual.")
 
-# Histórico de Mensagens + Navegação de Páginas Lado a Lado
+# Histórico de Mensagens + Navegação + Lupa de Zoom
 total_paginas_doc = len(st.session_state.textos_paginas)
 
 for idx_msg, msg in enumerate(st.session_state.mensagens):
@@ -412,15 +488,36 @@ for idx_msg, msg in enumerate(st.session_state.mensagens):
         if "num_pagina" in msg and st.session_state.pdf_processado:
             pag_atual = msg["num_pagina"]
             
-            with st.spinner(f"A preparar imagem da Página {pag_atual}..."):
-                img_exibir = extrair_imagem_pagina(pag_atual, traduzir_visualmente=traduzir_img_op)
+            with st.spinner(f"A gerar esquema em alta resolução (Página {pag_atual})..."):
+                img_exibir = extrair_imagem_pagina(
+                    pag_atual,
+                    traduzir_visualmente=traduzir_img_op,
+                    nivel_zoom=nivel_zoom
+                )
+            
+            # Seletor de Lupa por Zona para ver detalhes minúsculos em telemóvel ou PC
+            zona_zoom = st.selectbox(
+                "🔍 Lupa de Detalhe (Ampliar Zona do Esquema):",
+                options=[
+                    "Página Inteira (Alta Resolução)",
+                    "Esquerda Inferior (Bornes/Cabos)",
+                    "Direita Inferior (Bornes/Legenda)",
+                    "Esquerda Superior",
+                    "Direita Superior",
+                    "Centro Ampliado"
+                ],
+                key=f"lupa_{idx_msg}_{pag_atual}"
+            )
+            
+            img_final_mostrar = recortar_quadrante(img_exibir, zona_zoom)
                 
             st.image(
-                img_exibir,
-                caption=f"Esquema / Manual - Página {pag_atual} de {total_paginas_doc}",
+                img_final_mostrar,
+                caption=f"{st.session_state.ultimo_pdf_nome} - Página {pag_atual} de {total_paginas_doc} ({zona_zoom})",
                 use_container_width=True
             )
             
+            # Botões para passar as páginas para o lado (Anterior / Seguinte)
             col_ant, col_meio, col_prox = st.columns([1, 1, 1])
             with col_ant:
                 if st.button(
@@ -453,7 +550,7 @@ sintoma = st.chat_input("Faz uma pergunta sobre a página ou descreve uma avaria
 
 if sintoma:
     if not st.session_state.pdf_processado:
-        st.warning("Carrega primeiro o manual PDF na barra lateral!")
+        st.warning("Seleciona ou carrega primeiro um manual PDF na barra lateral!")
     else:
         with st.chat_message("user"):
             st.markdown(sintoma)
@@ -482,7 +579,8 @@ REGRAS OBRIGATÓRIAS DE RESPOSTA:
 3. Se o técnico relatar uma avaria, explica a causa técnica, indica os componentes, cabos e bornes exatos a medir no quadro ou no campo e sugere o próximo passo prático de verificação.
 4. Sempre que citares dados do documento, indica a página no formato [Página X]."""
 
-                    prompt_utilizador = f"""Página em foco no ecrã do técnico: [Página {st.session_state.pagina_ativa}]
+                    prompt_utilizador = f"""Manual ativo: {st.session_state.ultimo_pdf_nome}
+Página em foco no ecrã do técnico: [Página {st.session_state.pagina_ativa}]
 Páginas mais relevantes analisadas no manual: {paginas}
 
 Dados extraídos do manual e esquemas elétricos:
@@ -493,16 +591,13 @@ Pergunta ou sintoma do técnico: "{sintoma}"
 Responde de forma técnica, clara e completa combinando os dados destas páginas do manual com o teu conhecimento de manutenção e esquemas elétricos industriais."""
                     
                     try:
-                        # Envia as últimas 4 mensagens para a IA manter o fio à meada da conversa
                         historico_curto = st.session_state.mensagens[-4:]
                         resposta_ai, modelo_usado = gerar_resposta_groq(
                             api_key, prompt_sistema, historico_curto, prompt_utilizador
                         )
                         
-                        # Guarda a pergunta do utilizador no histórico
                         st.session_state.mensagens.append({"role": "user", "content": sintoma})
                         
-                        # Determina a página a mostrar na imagem
                         match_pagina = re.search(r'\[P[áa]gina\s*(\d+)\]', resposta_ai, re.IGNORECASE)
                         if match_pagina:
                             num_pag_ia = int(match_pagina.group(1))
