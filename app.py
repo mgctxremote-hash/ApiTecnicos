@@ -25,6 +25,8 @@ if "bm25_index" not in st.session_state:
     st.session_state.bm25_index = None
 if "pdf_bytes" not in st.session_state:
     st.session_state.pdf_bytes = None
+if "modelo_texto_auto" not in st.session_state:
+    st.session_state.modelo_texto_auto = None
 
 # ---------------------------------------------------------
 # FUNÇÕES CORE
@@ -46,7 +48,6 @@ def gerar_indice_bm25(textos):
     """Cria um índice de pesquisa instantâneo local (Zero Internet, Zero Limites)."""
     corpus_tokenizado = []
     for texto in textos:
-        # Remove pontuação e passa a minúsculas para melhorar o matching
         texto_limpo = re.sub(r'[^\w\s]', '', texto.lower())
         corpus_tokenizado.append(texto_limpo.split())
     return BM25Okapi(corpus_tokenizado)
@@ -56,7 +57,6 @@ def procurar_paginas_relevantes(sintoma, textos, bm25, top_k=2):
     sintoma_limpo = re.sub(r'[^\w\s]', '', sintoma.lower())
     tokenized_query = sintoma_limpo.split()
     
-    # O BM25 pontua cada página com base nas palavras coincidentes
     scores = bm25.get_scores(tokenized_query)
     
     if max(scores) == 0:
@@ -80,6 +80,38 @@ def extrair_imagem_pagina(num_pagina):
     pix = pagina.get_pixmap(matrix=matriz_zoom)
     imagem_bytes = pix.tobytes("png")
     return Image.open(io.BytesIO(imagem_bytes))
+
+def obter_modelo_texto():
+    """Procura dinamicamente o melhor modelo de texto autorizado na tua API Key."""
+    if st.session_state.modelo_texto_auto:
+        return st.session_state.modelo_texto_auto
+        
+    try:
+        modelos_disponiveis = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                modelos_disponiveis.append(m.name)
+        
+        # Prioridade 1: Tentar a versão mais recente e rápida do Flash
+        for m in modelos_disponiveis:
+            if '1.5-flash' in m:
+                st.session_state.modelo_texto_auto = m
+                return m
+                
+        # Prioridade 2: Tentar a versão Pro se o Flash não existir na tua região
+        for m in modelos_disponiveis:
+            if 'gemini-pro' in m or '1.0-pro' in m:
+                st.session_state.modelo_texto_auto = m
+                return m
+                
+        # Fallback: usar o primeiro modelo de texto que a Google permitir
+        if modelos_disponiveis:
+            st.session_state.modelo_texto_auto = modelos_disponiveis[0]
+            return modelos_disponiveis[0]
+    except Exception:
+        pass
+        
+    return "gemini-pro" # Último recurso absoluto
 
 # ---------------------------------------------------------
 # INTERFACE STREAMLIT
@@ -144,7 +176,10 @@ if sintoma:
                     """
                     
                     try:
-                        modelo = genai.GenerativeModel("gemini-1.5-flash")
+                        # Agora usa a função inteligente em vez de "gemini-1.5-flash" estático
+                        nome_modelo_ativo = obter_modelo_texto() 
+                        modelo = genai.GenerativeModel(nome_modelo_ativo)
+                        
                         resposta_ai = modelo.generate_content([prompt_sistema, f"Sintoma: {sintoma}"]).text
                         
                         st.markdown(resposta_ai)
