@@ -5,6 +5,7 @@ import numpy as np
 import re
 from PIL import Image
 import io
+import time
 
 # ---------------------------------------------------------
 # CONFIGURAÇÃO DE PÁGINA (Mobile Friendly)
@@ -55,16 +56,48 @@ def obter_modelo_embedding():
     return "models/text-embedding-004" # Fallback de segurança
 
 def gerar_embeddings(textos):
-    """Gera vetores de forma dinâmica e limpa, sem parâmetros conflituosos."""
+    """Gera vetores respeitando o limite do plano gratuito da Google (Batches com pausas)."""
+    modelo = obter_modelo_embedding()
+    vetores_totais = []
+    
+    # Processa 5 páginas de cada vez para não rebentar o limite de 30.000 tokens/min
+    tamanho_lote = 5 
+    
+    barra_progresso = st.progress(0, text="A processar páginas lentamente para respeitar o limite gratuito...")
+    
     try:
-        modelo = obter_modelo_embedding()
-        resultado = genai.embed_content(
-            model=modelo,
-            content=textos
-        )
-        return np.array(resultado['embedding'])
+        for i in range(0, len(textos), tamanho_lote):
+            lote = textos[i:i + tamanho_lote]
+            
+            # Limpa páginas vazias (esquemas 100% visuais) que a API rejeita
+            lote_limpo = [txt if txt else "página sem texto" for txt in lote]
+            
+            resultado = genai.embed_content(
+                model=modelo,
+                content=lote_limpo
+            )
+            
+            # Extrai e guarda os vetores gerados
+            if isinstance(resultado, dict) and 'embedding' in resultado:
+                embeddings = resultado['embedding']
+                if isinstance(embeddings[0], float): 
+                    vetores_totais.append(embeddings)
+                else:
+                    vetores_totais.extend(embeddings)
+            
+            # Atualiza a barra visual para o técnico saber que a aplicação não bloqueou
+            progresso = min(1.0, (i + tamanho_lote) / len(textos))
+            barra_progresso.progress(progresso, text=f"Indexadas {min(i+tamanho_lote, len(textos))} de {len(textos)} páginas...")
+            
+            # Faz uma pausa de 7 segundos antes do próximo lote para evitar o Erro 429
+            if i + tamanho_lote < len(textos):
+                time.sleep(7) 
+                
+        barra_progresso.empty() # Limpa a barra no fim
+        return np.array(vetores_totais)
+        
     except Exception as e:
-        st.error(f"Erro ao gerar embeddings com {st.session_state.nome_modelo_embedding}: {e}")
+        st.error(f"Erro a processar páginas (lote {i}): {e}")
         return None
 
 def procurar_paginas_relevantes(sintoma, textos, vetores, top_k=2):
