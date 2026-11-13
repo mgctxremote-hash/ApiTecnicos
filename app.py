@@ -144,13 +144,13 @@ if sintoma:
                         # Inicializa o cliente Groq
                         client = Groq(api_key=api_key)
                         
-                        # Chama o modelo Llama 3 (Ultra rápido)
+                        # Chama o modelo Llama 3 (Ultra rápido, versão atualizada)
                         chat_completion = client.chat.completions.create(
                             messages=[
                                 {"role": "system", "content": prompt_sistema},
                                 {"role": "user", "content": f"Sintoma: {sintoma}"}
                             ],
-                            model="llama-3.3-70b-versatile",
+                            model="llama-3.1-70b-versatile",
                             temperature=0.3,
                         )
                         
