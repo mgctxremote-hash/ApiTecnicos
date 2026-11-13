@@ -1,11 +1,11 @@
 import streamlit as st
 import fitz  # PyMuPDF
-import google.generativeai as genai
 import numpy as np
 import re
 from PIL import Image
 import io
 from rank_bm25 import BM25Okapi
+from groq import Groq
 
 # ---------------------------------------------------------
 # CONFIGURAÇÃO DE PÁGINA
@@ -25,8 +25,6 @@ if "bm25_index" not in st.session_state:
     st.session_state.bm25_index = None
 if "pdf_bytes" not in st.session_state:
     st.session_state.pdf_bytes = None
-if "modelo_texto_seguro" not in st.session_state:
-    st.session_state.modelo_texto_seguro = None
 
 # ---------------------------------------------------------
 # FUNÇÕES CORE
@@ -81,26 +79,6 @@ def extrair_imagem_pagina(num_pagina):
     imagem_bytes = pix.tobytes("png")
     return Image.open(io.BytesIO(imagem_bytes))
 
-def obter_modelo_texto():
-    """Garante a escolha de um modelo gratuito seguro (Flash ou Pro clássico), rejeitando modelos experimentais pagos (3.1)."""
-    if st.session_state.modelo_texto_seguro:
-        return st.session_state.modelo_texto_seguro
-        
-    # Lista branca rigorosa: apenas modelos conhecidos por terem quota gratuita.
-    modelos_permitidos = ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-1.0-pro"]
-    
-    try:
-        modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        for modelo_seguro in modelos_permitidos:
-            if modelo_seguro in modelos_disponiveis:
-                st.session_state.modelo_texto_seguro = modelo_seguro
-                return modelo_seguro
-    except Exception:
-        pass
-        
-    return "models/gemini-1.5-flash" # Fallback direto, nunca vai ao 3.1
-
 # ---------------------------------------------------------
 # INTERFACE STREAMLIT
 # ---------------------------------------------------------
@@ -108,9 +86,7 @@ st.title("🔧 Assistente MGC - Manuais")
 
 with st.sidebar:
     st.header("Configurações")
-    api_key = st.text_input("Gemini API Key", type="password")
-    if api_key:
-        genai.configure(api_key=api_key)
+    api_key = st.text_input("Groq API Key", type="password")
         
     st.divider()
     ficheiro_pdf = st.file_uploader("Carregar Manual da Máquina (PDF)", type="pdf")
@@ -121,7 +97,7 @@ with st.sidebar:
             st.session_state.bm25_index = gerar_indice_bm25(st.session_state.textos_paginas)
             
             st.session_state.pdf_processado = True
-            st.success(f"Indexação concluída instantaneamente! ({len(st.session_state.textos_paginas)} páginas)")
+            st.success(f"Indexação concluída! ({len(st.session_state.textos_paginas)} páginas prontas)")
 
 # Histórico
 for msg in st.session_state.mensagens:
@@ -135,7 +111,7 @@ sintoma = st.chat_input("Descreve a avaria ou palavra-chave (ex: falha pressosta
 
 if sintoma:
     if not st.session_state.pdf_processado:
-        st.warning("Carrega um manual e insere a API Key primeiro!")
+        st.warning("Carrega um manual e insere a Groq API Key primeiro!")
     else:
         st.session_state.mensagens.append({"role": "user", "content": sintoma})
         with st.chat_message("user"):
@@ -156,6 +132,7 @@ if sintoma:
                     És um técnico sénior de manutenção industrial. Diagnostica avarias passo a passo.
                     Usa APENAS a informação do manual fornecida abaixo.
                     Nunca dês a solução completa se for ambíguo. Dá a causa provável e termina com uma pergunta curta (ex: "O erro no sensor X confirma-se?").
+                    Responde sempre em Português de Portugal.
                     
                     REGRA ABSOLUTA: Sempre que referires a causa, OBRIGATORIAMENTE indica a página de onde tiraste a informação no formato exato: [Página X].
                     
@@ -164,14 +141,24 @@ if sintoma:
                     """
                     
                     try:
-                        # O modelo agora é 100% seguro (Flash ou Pro gratuito)
-                        nome_modelo_ativo = obter_modelo_texto() 
-                        modelo = genai.GenerativeModel(nome_modelo_ativo)
+                        # Inicializa o cliente Groq
+                        client = Groq(api_key=api_key)
                         
-                        resposta_ai = modelo.generate_content([prompt_sistema, f"Sintoma: {sintoma}"]).text
+                        # Chama o modelo Llama 3 (Ultra rápido)
+                        chat_completion = client.chat.completions.create(
+                            messages=[
+                                {"role": "system", "content": prompt_sistema},
+                                {"role": "user", "content": f"Sintoma: {sintoma}"}
+                            ],
+                            model="llama-3.3-70b-versatile",
+                            temperature=0.3,
+                        )
+                        
+                        resposta_ai = chat_completion.choices[0].message.content
                         
                         st.markdown(resposta_ai)
                         
+                        # Extrai a página para mostrar o esquema
                         match_pagina = re.search(r'\[Página (\d+)\]', resposta_ai, re.IGNORECASE)
                         img = None
                         num_pagina_detectada = None
@@ -187,5 +174,6 @@ if sintoma:
                             dados_resposta["imagem"] = img
                             dados_resposta["num_pagina"] = num_pagina_detectada
                         st.session_state.mensagens.append(dados_resposta)
+                        
                     except Exception as e:
-                        st.error(f"Erro na comunicação com o Gemini: {e}")
+                        st.error(f"Erro na comunicação com o Groq: {e}")
