@@ -3,3 +3,4 @@ PyMuPDF
 google-generativeai
 numpy
 pillow
+rank-bm25
