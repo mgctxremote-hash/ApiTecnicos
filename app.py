@@ -38,7 +38,7 @@ def processar_pdf(ficheiro):
     for num_pagina in range(len(doc)):
         texto = doc[num_pagina].get_text("text").strip()
         if not texto:
-            texto = "[Página sem texto detectável, apenas esquemas/imagens]"
+            texto = "[Página sem texto detetável, apenas esquemas/imagens]"
         textos.append(texto)
     ficheiro.seek(0)
     st.session_state.pdf_bytes = ficheiro.read()
@@ -68,13 +68,15 @@ def procurar_paginas_relevantes(sintoma, textos, bm25, top_k=2):
     paginas_alvo = []
     for idx in indices_top:
         if scores[idx] > 0:
-            contexto += f"\n\n--- PÁGINA {idx + 1} ---\n{textos[idx]}"
+            # Limpa espaços e linhas repetidas do esquema elétrico para não confundir a IA
+            texto_limpo = re.sub(r'\n+', '\n', textos[idx])
+            contexto += f"\n\n--- PÁGINA {idx + 1} ---\n{texto_limpo}"
             paginas_alvo.append(int(idx + 1))
         
     return contexto, paginas_alvo
 
 def extrair_imagem_pagina(num_pagina):
-    """Gera a imagem do esquema elétrico/mecânico da página."""
+    """Gera a imagem de alta resolução do esquema elétrico/mecânico da página."""
     doc = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
     pagina = doc.load_page(num_pagina - 1)
     matriz_zoom = fitz.Matrix(2.0, 2.0)
@@ -83,13 +85,14 @@ def extrair_imagem_pagina(num_pagina):
     return Image.open(io.BytesIO(imagem_bytes))
 
 def listar_modelos_chat_groq(api_key):
-    """Obtém apenas modelos de conversação (Chat), ignorando modelos de classificação/áudio."""
+    """Obtém apenas modelos de conversação robustos, bloqueando modelos pequenos (1B/3B) e de classificação."""
     if st.session_state.modelos_chat_validos:
         return st.session_state.modelos_chat_validos
         
     palavras_bloqueadas = [
         "guard", "whisper", "tts", "playai", "orpheus", 
-        "embed", "moderation", "vision", "audio", "safeguard"
+        "embed", "moderation", "vision", "audio", "safeguard",
+        "tool", "1b", "3b", "allam"
     ]
     
     modelos_filtrados = []
@@ -102,16 +105,16 @@ def listar_modelos_chat_groq(api_key):
             if not any(bloqueada in nome_min for bloqueada in palavras_bloqueadas):
                 modelos_filtrados.append(m)
                 
-        # Ordena dando prioridade aos modelos Llama de conversação e Qwen/Gemma
+        # Ordena dando prioridade aos modelos maiores e mais inteligentes em Português
         def prioridade(nome):
             n = nome.lower()
-            if "llama" in n and "70b" in n:
+            if "70b" in n or "120b" in n:
                 return 0
-            if "llama" in n and "8b" in n:
+            if "32b" in n or "27b" in n or "24b" in n:
                 return 1
-            if "qwen" in n or "gemma" in n or "deepseek" in n:
+            if "qwen" in n or "deepseek" in n or "gemma2-9b" in n:
                 return 2
-            if "llama" in n:
+            if "llama" in n and "8b" in n:
                 return 3
             return 4
             
@@ -120,13 +123,13 @@ def listar_modelos_chat_groq(api_key):
         pass
         
     if not modelos_filtrados:
-        modelos_filtrados = ["llama-3.1-8b-instant", "llama3-8b-8192", "gemma2-9b-it"]
+        modelos_filtrados = ["llama-3.1-8b-instant", "gemma2-9b-it"]
         
     st.session_state.modelos_chat_validos = modelos_filtrados
     return modelos_filtrados
 
-def gerar_resposta_groq(api_key, prompt_completo):
-    """Tenta gerar a resposta percorrendo os modelos de chat válidos até um responder com sucesso."""
+def gerar_resposta_groq(api_key, prompt_sistema, prompt_utilizador):
+    """Gera a resposta com temperatura baixa e penalização para impedir repetições e erros."""
     client = Groq(api_key=api_key)
     modelos = listar_modelos_chat_groq(api_key)
     ultimo_erro = ""
@@ -135,10 +138,13 @@ def gerar_resposta_groq(api_key, prompt_completo):
         try:
             chat_completion = client.chat.completions.create(
                 messages=[
-                    {"role": "user", "content": prompt_completo}
+                    {"role": "system", "content": prompt_sistema},
+                    {"role": "user", "content": prompt_utilizador}
                 ],
                 model=nome_modelo,
-                temperature=0.3,
+                temperature=0.1,
+                max_tokens=350,
+                top_p=0.9,
             )
             return chat_completion.choices[0].message.content, nome_modelo
         except Exception as e:
@@ -173,7 +179,7 @@ for msg in st.session_state.mensagens:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if "imagem" in msg:
-            st.image(msg["imagem"], caption=f"Esquema Referido (Página {msg['num_pagina']})", use_container_width=True)
+            st.image(msg["imagem"], caption=f"Esquema Visual - Página {msg['num_pagina']}", use_container_width=True)
 
 # Input
 sintoma = st.chat_input("Descreve a avaria ou palavra-chave (ex: erro -999 sonda da fornalha)...")
@@ -187,7 +193,7 @@ if sintoma:
             st.markdown(sintoma)
             
         with st.chat_message("assistant"):
-            with st.spinner("A diagnosticar..."):
+            with st.spinner("A analisar esquema e manual..."):
                 contexto_relevante, paginas = procurar_paginas_relevantes(
                     sintoma, 
                     st.session_state.textos_paginas, 
@@ -197,28 +203,38 @@ if sintoma:
                 if not paginas:
                     st.warning("Nenhuma das palavras digitadas foi encontrada no manual.")
                 else:
-                    prompt_unico = f"""És um técnico sénior de manutenção industrial. Diagnostica avarias passo a passo.
-Usa APENAS a informação do manual fornecida abaixo.
-Nunca dês a solução completa se for ambíguo. Dá a causa provável e termina com uma pergunta curta de despiste (ex: "Achas que o erro poderia ser no sensor da sonda?").
-Responde sempre em Português de Portugal.
+                    pagina_principal = paginas[0]
+                    
+                    prompt_sistema = """És um engenheiro e técnico sénior de manutenção industrial em Portugal.
+A tua função é ajudar o técnico no chão de fábrica a localizar componentes e diagnosticar avarias com base nos manuais e esquemas elétricos.
 
-REGRA ABSOLUTA: Sempre que referires a causa, OBRIGATORIAMENTE indica a página de onde tiraste a informação no formato exato: [Página X].
+REGRAS OBRIGATÓRIAS DE ESCRITA:
+1. Escreve EXCLUSIVAMENTE em Português de Portugal correto, claro e profissional (usa termos como "quadro elétrico", "borne", "cabo", "sonda", "verificar a continuidade", "alimentação 24VDC").
+2. PROIBIDO repetir frases, ideias ou palavras. Sê direto e conciso (máximo de 4 a 5 linhas no total).
+3. O texto fornecido vem de um esquema elétrico industrial (contém códigos de componentes como 14CT10, 26A3, cabos como 54W6, entradas analógicas, etc.). Identifica os códigos relevantes da página principal e indica-os ao técnico.
+4. Indica sempre a página principal no formato [Página X].
+5. Termina com uma única pergunta curta e prática de despiste (ex: "Consegues medir se chegam 24VDC aos bornes da sonda no quadro?")."""
 
-Contexto do manual recuperado:
+                    prompt_utilizador = f"""Página mais relevante encontrada pelo sistema: [Página {pagina_principal}]
+
+Texto extraído das páginas do manual/esquema elétrico:
 {contexto_relevante}
 
-Sintoma relatado pelo técnico: {sintoma}"""
+Sintoma ou dúvida do técnico: "{sintoma}"
+
+Fornece um diagnóstico curto, sem repetições, indicando os componentes a verificar na [Página {pagina_principal}]."""
                     
                     try:
-                        resposta_ai, modelo_usado = gerar_resposta_groq(api_key, prompt_unico)
+                        resposta_ai, modelo_usado = gerar_resposta_groq(api_key, prompt_sistema, prompt_utilizador)
                         st.markdown(resposta_ai)
                         
-                        # Procura [Página X] na resposta; se a IA não formatar, usa a página mais relevante do BM25
+                        # Usa a página principal encontrada pelo BM25 (ou a citada pela IA se existir no intervalo)
                         match_pagina = re.search(r'\[P[áa]gina\s*(\d+)\]', resposta_ai, re.IGNORECASE)
                         if match_pagina:
-                            num_pagina_detectada = int(match_pagina.group(1))
+                            num_pag_ia = int(match_pagina.group(1))
+                            num_pagina_detectada = num_pag_ia if num_pag_ia in paginas else pagina_principal
                         else:
-                            num_pagina_detectada = paginas[0]
+                            num_pagina_detectada = pagina_principal
                             
                         img = None
                         if 1 <= num_pagina_detectada <= len(st.session_state.textos_paginas):
@@ -233,8 +249,7 @@ Sintoma relatado pelo técnico: {sintoma}"""
                         
                     except Exception as e:
                         st.error(f"Erro na comunicação com o Groq: {e}")
-                        # Fallback de emergência: mostra a página do manual mesmo se a internet/IA falhar
                         num_pag_fallback = paginas[0]
                         img_fallback = extrair_imagem_pagina(num_pag_fallback)
                         st.info(f"A mostrar diretamente a Página {num_pag_fallback} encontrada no manual:")
-                        st.image(img_fallback, caption=f"Página {num_pag_fallback}", use_container_width=True)
+                        st.image(img_fallback, caption=f"Esquema Visual - Página {num_pag_fallback}", use_container_width=True)
