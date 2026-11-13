@@ -25,6 +25,8 @@ if "bm25_index" not in st.session_state:
     st.session_state.bm25_index = None
 if "pdf_bytes" not in st.session_state:
     st.session_state.pdf_bytes = None
+if "modelo_texto_auto" not in st.session_state:
+    st.session_state.modelo_texto_auto = None
 
 # ---------------------------------------------------------
 # FUNÇÕES CORE
@@ -79,6 +81,38 @@ def extrair_imagem_pagina(num_pagina):
     imagem_bytes = pix.tobytes("png")
     return Image.open(io.BytesIO(imagem_bytes))
 
+def obter_modelo_groq(api_key):
+    """Pesquisa dinamicamente os servidores do Groq para encontrar o modelo Llama ativo hoje."""
+    if st.session_state.modelo_texto_auto:
+        return st.session_state.modelo_texto_auto
+        
+    try:
+        client = Groq(api_key=api_key)
+        modelos_groq = client.models.list().data
+        nomes_disponiveis = [m.id for m in modelos_groq]
+        
+        # 1º Tenta encontrar qualquer versão do Llama 70B (a mais inteligente)
+        for nome in nomes_disponiveis:
+            if "llama" in nome.lower() and "70b" in nome.lower():
+                st.session_state.modelo_texto_auto = nome
+                return nome
+                
+        # 2º Tenta encontrar qualquer Llama (ex: 8B, se o 70B estiver em manutenção)
+        for nome in nomes_disponiveis:
+            if "llama" in nome.lower():
+                st.session_state.modelo_texto_auto = nome
+                return nome
+                
+        # 3º Fallback de segurança: usa o primeiro modelo da lista deles
+        if nomes_disponiveis:
+            st.session_state.modelo_texto_auto = nomes_disponiveis[0]
+            return nomes_disponiveis[0]
+            
+    except Exception:
+        pass
+        
+    return "llama3-8b-8192" # Fallback absoluto se a leitura falhar
+
 # ---------------------------------------------------------
 # INTERFACE STREAMLIT
 # ---------------------------------------------------------
@@ -96,8 +130,12 @@ with st.sidebar:
             st.session_state.textos_paginas = processar_pdf(ficheiro_pdf)
             st.session_state.bm25_index = gerar_indice_bm25(st.session_state.textos_paginas)
             
+            # Testa a conexão e guarda o modelo silenciosamente
+            modelo_ativo = obter_modelo_groq(api_key)
+            
             st.session_state.pdf_processado = True
             st.success(f"Indexação concluída! ({len(st.session_state.textos_paginas)} páginas prontas)")
+            st.info(f"Conectado ao modelo: {modelo_ativo}")
 
 # Histórico
 for msg in st.session_state.mensagens:
@@ -141,16 +179,15 @@ if sintoma:
                     """
                     
                     try:
-                        # Inicializa o cliente Groq
                         client = Groq(api_key=api_key)
+                        nome_modelo = obter_modelo_groq(api_key)
                         
-                        # Chama o modelo Llama 3 (Ultra rápido, versão atualizada)
                         chat_completion = client.chat.completions.create(
                             messages=[
                                 {"role": "system", "content": prompt_sistema},
                                 {"role": "user", "content": f"Sintoma: {sintoma}"}
                             ],
-                            model="llama-3.1-70b-versatile",
+                            model=nome_modelo,
                             temperature=0.3,
                         )
                         
@@ -158,7 +195,6 @@ if sintoma:
                         
                         st.markdown(resposta_ai)
                         
-                        # Extrai a página para mostrar o esquema
                         match_pagina = re.search(r'\[Página (\d+)\]', resposta_ai, re.IGNORECASE)
                         img = None
                         num_pagina_detectada = None
