@@ -20,6 +20,9 @@ st.set_page_config(page_title="Assistente de Diagnóstico", page_icon="🔧", la
 # APENAS PARA USO LOCAL NO PC (Deixa vazio "" se fores enviar o código para o GitHub!)
 CHAVE_LOCAL_FIXA = ""
 
+# Cache global em memória (seguro para múltiplas threads fora do st.session_state)
+CACHE_TRADUCOES = {}
+
 # ---------------------------------------------------------
 # INICIALIZAÇÃO DE SESSÃO
 # ---------------------------------------------------------
@@ -41,20 +44,18 @@ if "idioma_manual" not in st.session_state:
     st.session_state.idioma_manual = "pt"
 if "cache_imagens" not in st.session_state:
     st.session_state.cache_imagens = {}
-if "cache_traducoes" not in st.session_state:
-    st.session_state.cache_traducoes = {}
 
 # ---------------------------------------------------------
 # FUNÇÕES DE TRADUÇÃO INTERNA (TEXTO E IMAGEM)
 # ---------------------------------------------------------
 def chamar_tradutor_pt(texto, retornar_idioma=False):
-    """Traduz qualquer texto para Português de Portugal sem precisar de bibliotecas externas."""
+    """Traduz qualquer texto para Português de Portugal de forma segura em multi-threading."""
     texto_limpo = texto.strip()
     if not texto_limpo:
         return ("", "pt") if retornar_idioma else ""
         
-    if not retornar_idioma and texto_limpo in st.session_state.cache_traducoes:
-        return st.session_state.cache_traducoes[texto_limpo]
+    if not retornar_idioma and texto_limpo in CACHE_TRADUCOES:
+        return CACHE_TRADUCOES[texto_limpo]
 
     try:
         url = (
@@ -67,7 +68,7 @@ def chamar_tradutor_pt(texto, retornar_idioma=False):
             texto_traduzido = "".join([parte[0] for parte in dados[0] if parte[0]])
             idioma_origem = dados[2] if len(dados) > 2 else "pt"
             
-            st.session_state.cache_traducoes[texto_limpo] = texto_traduzido
+            CACHE_TRADUCOES[texto_limpo] = texto_traduzido
             if retornar_idioma:
                 return texto_traduzido, idioma_origem
             return texto_traduzido
@@ -129,11 +130,10 @@ def processar_pdf(ficheiro):
     st.session_state.pdf_bytes = ficheiro.read()
     st.session_state.cache_imagens = {}
     
-    # Deteta o idioma do manual
     idioma = detetar_idioma_pdf(textos_originais)
     st.session_state.idioma_manual = idioma
     
-    # Se não estiver em Português, traduz o texto de todas as páginas em paralelo para a pesquisa funcionar em PT
+    # Se não estiver em Português, traduz o texto de todas as páginas em paralelo
     if not idioma.startswith("pt"):
         barra = st.progress(0, text=f"Manual detetado em '{idioma.upper()}'. A traduzir automaticamente para Português...")
         textos_traduzidos = list(textos_originais)
@@ -142,7 +142,6 @@ def processar_pdf(ficheiro):
             idx, txt = idx_texto
             if "[Página sem texto" in txt:
                 return idx, txt
-            # Limita a 3500 caracteres por página para tradução rápida
             return idx, chamar_tradutor_pt(txt[:3500])
 
         with ThreadPoolExecutor(max_workers=8) as executor:
@@ -194,51 +193,53 @@ def extrair_imagem_pagina(num_pagina, traduzir_visualmente=True):
     doc = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
     pagina = doc.load_page(num_pagina - 1)
     
-    # Se a tradução visual estiver ativa, traduz as etiquetas/textos diretamente na folha antes de gerar a imagem
     if traduzir_visualmente:
-        estrutura = pagina.get_text("dict")
-        linhas_para_traduzir = []
-        
-        for bloco in estrutura.get("blocks", []):
-            if bloco.get("type") == 0:  # Bloco de texto
-                for linha in bloco.get("lines", []):
-                    # Apenas linhas horizontais normais para não desalinhar esquemas verticais
-                    if linha.get("dir", (1.0, 0.0)) == (1.0, 0.0):
-                        spans = linha.get("spans", [])
-                        texto_linha = "".join([s.get("text", "") for s in spans]).strip()
-                        if len(texto_linha) >= 3 and precisa_traduzir_linha(texto_linha):
-                            tamanho_orig = spans[0].get("size", 8.0) if spans else 8.0
-                            linhas_para_traduzir.append((linha["bbox"], texto_linha, tamanho_orig))
-        
-        if linhas_para_traduzir:
-            textos_orig = [item[1] for item in linhas_para_traduzir]
-            with ThreadPoolExecutor(max_workers=8) as executor:
-                textos_pt = list(executor.map(chamar_tradutor_pt, textos_orig))
-                
-            for (bbox, txt_orig, tam_orig), txt_pt in zip(linhas_para_traduzir, textos_pt):
-                txt_pt_limpo = limpar_caracteres_pdf(txt_pt.strip())
-                # Só substitui na imagem se a tradução for diferente do texto original
-                if txt_pt_limpo and txt_pt_limpo.lower() != txt_orig.strip().lower():
-                    rect = fitz.Rect(bbox)
-                    largura_caixa = max(rect.width, 10.0)
+        try:
+            estrutura = pagina.get_text("dict")
+            linhas_para_traduzir = []
+            
+            for bloco in estrutura.get("blocks", []):
+                if bloco.get("type") == 0:
+                    for linha in bloco.get("lines", []):
+                        if linha.get("dir", (1.0, 0.0)) == (1.0, 0.0):
+                            spans = linha.get("spans", [])
+                            texto_linha = "".join([s.get("text", "") for s in spans]).strip()
+                            if len(texto_linha) >= 3 and precisa_traduzir_linha(texto_linha):
+                                tamanho_orig = spans[0].get("size", 8.0) if spans else 8.0
+                                linhas_para_traduzir.append((linha["bbox"], texto_linha, tamanho_orig))
+            
+            if linhas_para_traduzir:
+                textos_orig = [item[1] for item in linhas_para_traduzir]
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    textos_pt = list(executor.map(chamar_tradutor_pt, textos_orig))
                     
-                    # Apaga apenas as letras originais com fundo branco sem tocar nas linhas do esquema
-                    pagina.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-                    
-                    # Ajusta o tamanho da letra para caber exatamente no espaço original
-                    tam_fonte = min(tam_orig, max(rect.height * 0.85, 4.5))
-                    largura_texto = fitz.get_text_length(txt_pt_limpo, fontname="helv", fontsize=tam_fonte)
-                    if largura_texto > largura_caixa and largura_texto > 0:
-                        tam_fonte = max(3.8, tam_fonte * (largura_caixa / largura_texto))
+                for (bbox, txt_orig, tam_orig), txt_pt in zip(linhas_para_traduzir, textos_pt):
+                    txt_pt_limpo = limpar_caracteres_pdf(txt_pt.strip())
+                    if txt_pt_limpo and txt_pt_limpo.lower() != txt_orig.strip().lower():
+                        rect = fitz.Rect(bbox)
+                        largura_caixa = max(rect.width, 10.0)
                         
-                    ponto_escrita = fitz.Point(rect.x0, rect.y1 - max(1.0, (rect.height - tam_fonte) * 0.25))
-                    pagina.insert_text(
-                        ponto_escrita,
-                        txt_pt_limpo,
-                        fontsize=tam_fonte,
-                        fontname="helv",
-                        color=(0, 0, 0)
-                    )
+                        pagina.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
+                        
+                        tam_fonte = min(tam_orig, max(rect.height * 0.85, 4.5))
+                        try:
+                            largura_texto = fitz.get_text_length(txt_pt_limpo, fontname="helv", fontsize=tam_fonte)
+                        except Exception:
+                            largura_texto = len(txt_pt_limpo) * tam_fonte * 0.55
+                            
+                        if largura_texto > largura_caixa and largura_texto > 0:
+                            tam_fonte = max(3.8, tam_fonte * (largura_caixa / largura_texto))
+                            
+                        ponto_escrita = fitz.Point(rect.x0, rect.y1 - max(1.0, (rect.height - tam_fonte) * 0.25))
+                        pagina.insert_text(
+                            ponto_escrita,
+                            txt_pt_limpo,
+                            fontsize=tam_fonte,
+                            fontname="helv",
+                            color=(0, 0, 0)
+                        )
+        except Exception:
+            pass
 
     matriz_zoom = fitz.Matrix(2.0, 2.0)
     pix = pagina.get_pixmap(matrix=matriz_zoom)
@@ -349,16 +350,18 @@ with st.sidebar:
         total_pags = len(st.session_state.textos_paginas)
         idioma_det = st.session_state.idioma_manual.upper()
         st.success(f"Manual pronto! ({total_pags} páginas)")
-        if not st.session_state.idioma_manual.startswith("pt"):
+        
+        manual_estrangeiro = not st.session_state.idioma_manual.startswith("pt")
+        if manual_estrangeiro:
             st.info(f"🌐 Idioma original: {idioma_det} (Traduzido automaticamente para PT)")
         
         traduzir_img_op = st.checkbox(
             "Traduzir textos na imagem para Português",
-            value=True,
-            help="Substitui automaticamente palavras estrangeiras na imagem da página por Português."
+            value=manual_estrangeiro,
+            help="Ativa automaticamente quando o manual não está em Português."
         )
     else:
-        traduzir_img_op = True
+        traduzir_img_op = False
 
 # Histórico de Mensagens + Navegação de Páginas Lado a Lado
 total_paginas_doc = len(st.session_state.textos_paginas)
@@ -369,13 +372,12 @@ for idx_msg, msg in enumerate(st.session_state.mensagens):
         if "num_pagina" in msg and st.session_state.pdf_processado:
             pag_atual = msg["num_pagina"]
             
-            # Extrai a imagem (já traduzida para Português se ativo)
             with st.spinner(f"A preparar imagem da Página {pag_atual}..."):
                 img_exibir = extrair_imagem_pagina(pag_atual, traduzir_visualmente=traduzir_img_op)
                 
             st.image(
                 img_exibir,
-                caption=f"Esquema / Manual em Português - Página {pag_atual} de {total_paginas_doc}",
+                caption=f"Esquema / Manual - Página {pag_atual} de {total_paginas_doc}",
                 use_container_width=True
             )
             
@@ -418,7 +420,6 @@ if sintoma:
             
         with st.chat_message("assistant"):
             with st.spinner("A analisar esquema e manual..."):
-                # Se o técnico escrever noutro idioma ou em PT, garante compatibilidade total
                 contexto_relevante, paginas = procurar_paginas_relevantes(
                     sintoma, 
                     st.session_state.textos_paginas, 
