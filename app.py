@@ -25,7 +25,7 @@ CHAVE_LOCAL_FIXA = ""
 PASTA_MANUAIS = "manuais"
 os.makedirs(PASTA_MANUAIS, exist_ok=True)
 
-# Ficheiro local para persistir a chave API e evitar repetição
+# Ficheiro local para persistir a chave API
 FICHEIRO_CONFIG_LOCAL = ".groq_key.json"
 
 # Cache global em memória para traduções (Thread-safe)
@@ -120,7 +120,6 @@ def limpar_caracteres_pdf(texto):
 # GESTÃO DE CHAVES E CONFIGURAÇÃO
 # ---------------------------------------------------------
 def obter_chave_oculta():
-    """Procura a API Key nos Secrets, variáveis de ambiente, ficheiro local ou código."""
     if CHAVE_LOCAL_FIXA.strip():
         return CHAVE_LOCAL_FIXA.strip()
     try:
@@ -129,7 +128,6 @@ def obter_chave_oculta():
     except Exception:
         pass
     
-    # Procura no ficheiro local persistido
     if os.path.exists(FICHEIRO_CONFIG_LOCAL):
         try:
             with open(FICHEIRO_CONFIG_LOCAL, "r", encoding="utf-8") as f:
@@ -142,7 +140,6 @@ def obter_chave_oculta():
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def guardar_chave_local(api_key):
-    """Guarda a chave API num ficheiro local para não ser preciso redigitar."""
     try:
         with open(FICHEIRO_CONFIG_LOCAL, "w", encoding="utf-8") as f:
             json.dump({"groq_key": api_key.strip()}, f)
@@ -150,7 +147,6 @@ def guardar_chave_local(api_key):
         pass
 
 def obter_pin_seguro():
-    """Obtém o PIN configurado nos Secrets ou assume o padrão 'tecnicos4321'."""
     try:
         if "PIN_ACESSO" in st.secrets:
             return st.secrets["PIN_ACESSO"].strip()
@@ -171,7 +167,6 @@ if not st.session_state.autenticado:
             utilizador_input = st.text_input("Nome de Usuário (Ex: Bruno, Alexandre, João)")
             chave_input = st.text_input("Chave de Acesso MGC", type="password")
             
-            # Se não houver chave oculta configurada no sistema, pede a API Key do Groq no login
             chave_sistema = obter_chave_oculta()
             api_key_input = ""
             if not chave_sistema:
@@ -250,7 +245,6 @@ def gerar_indice_bm25(textos):
     return BM25Okapi(corpus_tokenizado)
 
 def corrigir_termo_por_aproximacao(sintoma, textos_paginas):
-    """Verifica se há erro de escrita e sugere a correção baseada nos termos reais do manual."""
     palavras_manual = set()
     for txt in textos_paginas:
         for p in re.findall(r'[A-Za-zÀ-ÿ]{4,}', txt.lower()):
@@ -312,7 +306,8 @@ def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=
 
     return contexto, paginas_alvo
 
-def extrair_imagem_pagina(num_pagina, traduzir_visualmente=True, nivel_zoom=3.0):
+def extrair_imagem_pagina(num_pagina, traduzir_visualmente=True, nivel_zoom=3.5):
+    """Gera a imagem em alta resolução nativa. O zoom é feito por pinch-to-zoom ou wheel no ecrã cheio."""
     nome_doc = st.session_state.ultimo_pdf_nome or "doc"
     chave_cache = f"{nome_doc}_{num_pagina}_{traduzir_visualmente}_{nivel_zoom}"
     if chave_cache in st.session_state.cache_imagens:
@@ -365,26 +360,11 @@ def extrair_imagem_pagina(num_pagina, traduzir_visualmente=True, nivel_zoom=3.0)
     pix = pagina.get_pixmap(matrix=matriz_zoom)
     img_final = Image.open(io.BytesIO(pix.tobytes("png")))
     
-    # Limitação de cache para no máximo 4 imagens para poupar RAM
     if len(st.session_state.cache_imagens) > 4:
         st.session_state.cache_imagens.pop(next(iter(st.session_state.cache_imagens)))
         
     st.session_state.cache_imagens[chave_cache] = img_final
     return img_final
-
-def recortar_quadrante(img, zona):
-    largura, altura = img.size
-    if zona == "Esquerda Superior":
-        return img.crop((0, 0, int(largura * 0.55), int(altura * 0.55)))
-    elif zona == "Direita Superior":
-        return img.crop((int(largura * 0.45), 0, largura, int(altura * 0.55)))
-    elif zona == "Esquerda Inferior (Bornes/Cabos)":
-        return img.crop((0, int(altura * 0.45), int(largura * 0.55), altura))
-    elif zona == "Direita Inferior (Bornes/Legenda)":
-        return img.crop((int(largura * 0.45), int(altura * 0.45), largura, altura))
-    elif zona == "Centro Ampliado":
-        return img.crop((int(largura * 0.2), int(altura * 0.2), int(largura * 0.8), int(altura * 0.8)))
-    return img
 
 def listar_modelos_chat_groq(api_key):
     if st.session_state.modelos_chat_validos:
@@ -476,7 +456,6 @@ with st.sidebar:
         st.session_state.pdf_processado = False
         st.session_state.ultimo_pdf_nome = manual_escolhido_nome
 
-    # Opção manual para ativar tradução caso venha noutro idioma
     ativar_traducao_manual = st.checkbox("🌐 Ativar Tradução Automática PT (Se estrangeiro)", value=False)
 
     if bytes_para_processar and not st.session_state.pdf_processado and api_key:
@@ -490,9 +469,6 @@ with st.sidebar:
         total_pags = len(st.session_state.textos_paginas)
         st.success(f"Ativo: {st.session_state.ultimo_pdf_nome} ({total_pags} págs)")
         
-        st.divider()
-        st.subheader("🔍 Visualização e Zoom")
-        nivel_zoom = st.slider("Nitidez / Zoom (DPI):", min_value=2.0, max_value=4.5, value=3.0, step=0.5)
         traduzir_img_op = st.checkbox("Traduzir textos na imagem para PT", value=ativar_traducao_manual)
         
         pag_selecionada = st.number_input("Página em leitura / foco:", min_value=1, max_value=total_pags, value=st.session_state.pagina_ativa or 1, step=1)
@@ -507,10 +483,9 @@ with st.sidebar:
             st.session_state.autenticado = False
             st.rerun()
     else:
-        nivel_zoom = 3.0
         traduzir_img_op = False
 
-# Histórico de Mensagens + Lupa de Zoom
+# Histórico de Mensagens
 total_paginas_doc = len(st.session_state.textos_paginas)
 
 for idx_msg, msg in enumerate(st.session_state.mensagens):
@@ -520,15 +495,11 @@ for idx_msg, msg in enumerate(st.session_state.mensagens):
             pag_atual = msg["num_pagina"]
             
             with st.spinner(f"A gerar esquema (Página {pag_atual})..."):
-                img_exibir = extrair_imagem_pagina(pag_atual, traduzir_visualmente=traduzir_img_op, nivel_zoom=nivel_zoom)
+                # Resolução fixa otimizada (3.5x), garantindo nitidez sem sobrecarregar a memória
+                img_exibir = extrair_imagem_pagina(pag_atual, traduzir_visualmente=traduzir_img_op, nivel_zoom=3.5)
             
-            zona_zoom = st.selectbox(
-                "🔍 Lupa de Detalhe (Ampliar Zona do Esquema):",
-                ["Página Inteira (Alta Resolução)", "Esquerda Inferior (Bornes/Cabos)", "Direita Inferior (Bornes/Legenda)", "Esquerda Superior", "Direita Superior", "Centro Ampliado"],
-                key=f"lupa_{idx_msg}_{pag_atual}"
-            )
-            
-            st.image(recortar_quadrante(img_exibir, zona_zoom), caption=f"Página {pag_atual} de {total_paginas_doc} ({zona_zoom})", use_container_width=True)
+            # Imagem limpa com suporte nativo a zoom por gesto (dois dedos) ou wheel (rato) ao abrir em ecrã cheio
+            st.image(img_exibir, caption=f"Página {pag_atual} de {total_paginas_doc} (Clique no ícone de expandir para zoom em ecrã cheio)", use_container_width=True)
             
             col_ant, col_meio, col_prox = st.columns([1, 1, 1])
             with col_ant:
@@ -551,7 +522,6 @@ if sintoma:
     if not st.session_state.pdf_processado:
         st.warning("Seleciona ou carrega primeiro um manual PDF na barra lateral!")
     else:
-        # Aplicação do corretor ortográfico por aproximação
         sintoma_processado, termo_sugerido = corrigir_termo_por_aproximacao(sintoma, st.session_state.textos_paginas)
         
         texto_exibir_utilizador = sintoma
