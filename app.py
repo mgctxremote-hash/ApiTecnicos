@@ -48,7 +48,7 @@ def gerar_embeddings(textos):
     """Gera vetores usando a API leve e gratuita do Gemini."""
     try:
         resultado = genai.embed_content(
-            model="models/embedding-001",
+            model="models/text-embedding-004",
             content=textos,
             task_type="retrieval_document",
         )
@@ -61,7 +61,7 @@ def procurar_paginas_relevantes(sintoma, textos, vetores, top_k=2):
     """Pesquisa as páginas mais semelhantes ao sintoma usando Matemática simples (NumPy)."""
     # Cria o vetor do sintoma
     vetor_sintoma = np.array(genai.embed_content(
-        model="models/embedding-001",
+        model="models/text-embedding-004",
         content=sintoma,
         task_type="retrieval_query"
     )['embedding'])
