@@ -63,7 +63,6 @@ if "pagina_ativa" not in st.session_state:
 # FUNÇÕES DE TRADUÇÃO INTERNA (TEXTO E IMAGEM)
 # ---------------------------------------------------------
 def chamar_tradutor_pt(texto, retornar_idioma=False):
-    """Traduz qualquer texto para Português de Portugal de forma segura em multi-threading."""
     texto_limpo = texto.strip()
     if not texto_limpo:
         return ("", "pt") if retornar_idioma else ""
@@ -90,7 +89,6 @@ def chamar_tradutor_pt(texto, retornar_idioma=False):
         return (texto, "pt") if retornar_idioma else texto
 
 def detetar_idioma_pdf(textos):
-    """Analisa uma amostra do manual para detetar se está noutra língua."""
     amostra = ""
     for t in textos:
         if "[Página sem texto" not in t and len(t) > 40:
@@ -103,14 +101,12 @@ def detetar_idioma_pdf(textos):
     return idioma.lower() if idioma else "pt"
 
 def precisa_traduzir_linha(texto):
-    """Filtra apenas palavras reais e ignora códigos puros de esquemas."""
     palavras = re.findall(r'[A-Za-zÀ-ÿ]{3,}', texto)
     termos_tecnicos_fixos = {"vdc", "vac", "pe", "eco", "mgc", "plc", "cpu", "liycy", "pt100"}
     palavras_reais = [p for p in palavras if p.lower() not in termos_tecnicos_fixos]
     return len(palavras_reais) > 0
 
 def limpar_caracteres_pdf(texto):
-    """Garante compatibilidade de caracteres com a fonte interna do PDF."""
     substituicoes = {"“": '"', "”": '"', "‘": "'", "’": "'", "–": "-", "—": "-", "…": "..."}
     for orig, subst in substituicoes.items():
         texto = texto.replace(orig, subst)
@@ -188,7 +184,7 @@ if not st.session_state.autenticado:
     st.stop()
 
 # ---------------------------------------------------------
-# FUNÇÕES CORE DE PROCESSAMENTO DE PDF
+# FUNÇÕES CORE DE PROCESSAMENTO DE PDF E MOTOR DE BUSCA OTIMIZADO
 # ---------------------------------------------------------
 def listar_manuais_fixos():
     manuais = {}
@@ -240,21 +236,22 @@ def processar_bytes_pdf(pdf_bytes, ativar_traducao=False):
 def gerar_indice_bm25(textos):
     corpus_tokenizado = []
     for texto in textos:
-        texto_limpo = re.sub(r'[^\w\s]', ' ', texto.lower())
+        # Preserva códigos com sinais negativos e alfanuméricos (ex: -999, PT100)
+        texto_limpo = re.sub(r'[^\w\s\-]', ' ', texto.lower())
         corpus_tokenizado.append(texto_limpo.split())
     return BM25Okapi(corpus_tokenizado)
 
 def corrigir_termo_por_aproximacao(sintoma, textos_paginas):
     palavras_manual = set()
     for txt in textos_paginas:
-        for p in re.findall(r'[A-Za-zÀ-ÿ]{4,}', txt.lower()):
+        for p in re.findall(r'[A-Za-zÀ-ÿ0-9\-]{3,}', txt.lower()):
             palavras_manual.add(p)
             
-    termos_utilizador = re.findall(r'[A-Za-zÀ-ÿ]{4,}', sintoma.lower())
+    termos_utilizador = re.findall(r'[A-Za-zÀ-ÿ0-9\-]{3,}', sintoma.lower())
     correcoes_feitas = {}
     
     for termo in termos_utilizador:
-        if termo not in palavras_manual:
+        if termo not in palavras_manual and not termo.startswith("-"):
             matches = difflib.get_close_matches(termo, list(palavras_manual), n=1, cutoff=0.75)
             if matches:
                 correcoes_feitas[termo] = matches[0]
@@ -272,13 +269,25 @@ def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=
     total_pags = len(textos)
     paginas_alvo = []
 
+    # 1. Procura citação explícita de página (ex: "página 21")
     match_pag_pergunta = re.search(r'p[áa]g(?:ina)?\.?\s*(\d+)', sintoma, re.IGNORECASE)
     if match_pag_pergunta:
         pag_citada = int(match_pag_pergunta.group(1))
         if 1 <= pag_citada <= total_pags:
             paginas_alvo.append(pag_citada)
 
-    sintoma_limpo = re.sub(r'[^\w\s]', ' ', sintoma.lower())
+    # 2. DETETOR DIRETO DE CÓDIGOS DE ERRO E SINAIS NEGATIVOS (ex: -999, 999, PT100)
+    # Extrai números isolados ou com sinal negativo
+    padrao_numerico = re.findall(r'\-?\d+', sintoma)
+    for idx, texto_pag in enumerate(textos):
+        for num in padrao_numerico:
+            if num in texto_pag:
+                num_p = idx + 1
+                if num_p not in paginas_alvo:
+                    paginas_alvo.append(num_p)
+
+    # 3. Pesquisa algorítmica BM25 com preservação de termos técnicos
+    sintoma_limpo = re.sub(r'[^\w\s\-]', ' ', sintoma.lower())
     tokenized_query = sintoma_limpo.split()
     scores = bm25.get_scores(tokenized_query)
     indices_top = np.argsort(scores)[::-1][:top_k]
@@ -307,7 +316,6 @@ def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=
     return contexto, paginas_alvo
 
 def extrair_imagem_pagina(num_pagina, traduzir_visualmente=True, nivel_zoom=3.5):
-    """Gera a imagem em alta resolução nativa. O zoom é feito por pinch-to-zoom ou wheel no ecrã cheio."""
     nome_doc = st.session_state.ultimo_pdf_nome or "doc"
     chave_cache = f"{nome_doc}_{num_pagina}_{traduzir_visualmente}_{nivel_zoom}"
     if chave_cache in st.session_state.cache_imagens:
@@ -495,10 +503,8 @@ for idx_msg, msg in enumerate(st.session_state.mensagens):
             pag_atual = msg["num_pagina"]
             
             with st.spinner(f"A gerar esquema (Página {pag_atual})..."):
-                # Resolução fixa otimizada (3.5x), garantindo nitidez sem sobrecarregar a memória
                 img_exibir = extrair_imagem_pagina(pag_atual, traduzir_visualmente=traduzir_img_op, nivel_zoom=3.5)
             
-            # Imagem limpa com suporte nativo a zoom por gesto (dois dedos) ou wheel (rato) ao abrir em ecrã cheio
             st.image(img_exibir, caption=f"Página {pag_atual} de {total_paginas_doc} (Clique no ícone de expandir para zoom em ecrã cheio)", use_container_width=True)
             
             col_ant, col_meio, col_prox = st.columns([1, 1, 1])
@@ -546,26 +552,27 @@ if sintoma:
                 else:
                     pagina_principal = paginas[0]
                     
-                    prompt_sistema = """És um engenheiro eletromecânico e técnico sénior de manutenção e automação industrial em Portugal.
-A tua função é responder a dúvidas técnicas e ajudar no diagnóstico de avarias combinando TODOS os dados fornecidos do manual/esquema elétrico com o teu conhecimento sólido de engenharia industrial.
+                    # PROMPT TÉCNICO DE ENGENHARIA AVANÇADO
+                    prompt_sistema = """És um engenheiro eletromecânico e técnico sénior de manutenção, instrumentação e automação industrial em Portugal, especialista em centrais térmicas e caldeiras de biomassa.
+A tua missão absoluta é guiar o técnico no chão de fábrica no diagnóstico e resolução exata de avarias, cruzando rigorosamente os dados do manual técnico e esquemas elétricos fornecidos com a realidade física dos equipamentos.
 
-REGRAS OBRIGATÓRIAS DE RESPOSTA:
-1. Escreve EXCLUSIVAMENTE em Português de Portugal correto, claro e direto, sem repetir frases ou palavras.
-2. RESPOSTA COMPLETA E DIRETA: Se o técnico fizer uma pergunta específica (sobre pinos, cabos, bornes, polaridades Uv, I+, Power, Signal, 24VDC, 0V, PE), responde diretamente e de forma completa cruzando os dados do manual com as normas industriais. Nunca ocultes a resposta.
-3. Se o técnico relatar uma avaria, explica a causa técnica, indica os componentes e bornes exatos a medir e sugere o próximo passo prático.
-4. Sempre que citares dados do documento, indica a página no formato [Página X]."""
+DIRETRIZES DE RESPOSTA TÉCNICA:
+1. Escreve EXCLUSIVAMENTE em Português de Portugal correto, técnico, profissional e direto (usa terminologia de chão de fábrica: "bornes", "cablagem", "malha 4-20mA", "sonda PT100", "alimentação 24VDC", "cartão de entradas analógicas do PLC", "rotura de cabo", "mau contacto", "sinal fora de escala").
+2. INTERPRETAÇÃO DE CÓDIGOS DE ERRO (como -999): Explica tecnicamente o significado do erro (por exemplo, o código -999 indica tipicamente falha de leitura analógica, sensor em circuito aberto, rotura de cabo na malha da sonda de temperatura ou canal desconfigurado no PLC). Indica os bornes, pinos e cabos específicos a testar no terreno ou no quadro elétrico.
+3. Raciocínio de Engenheiro: Sê pragmático. Mostra os passos de verificação lógica (ex: 1. Medir tensão de alimentação 24VDC no borne X; 2. Verificar continuidade do cabo Blindado LiYCY; 3. Validar resistência óhmica da PT100).
+4. Indicação de Página: Sempre que baseares a resposta num documento, indica obrigatoriamente a página no formato exato [Página X]."""
 
                     prompt_utilizador = f"""Técnico em sessão: {st.session_state.utilizador_atual}
 Manual ativo: {st.session_state.ultimo_pdf_nome}
-Página em foco no ecrã: [Página {st.session_state.pagina_ativa}]
-Páginas analisadas no manual: {paginas}
+Página em foco no ecrã do técnico: [Página {st.session_state.pagina_ativa}]
+Páginas detetadas como mais relevantes no manual: {paginas}
 
 Dados extraídos do manual e esquemas elétricos:
 {contexto_relevante}
 
-Pergunta ou sintoma do técnico: "{sintoma_processado}"
+Sintoma ou pergunta técnica colocada pelo técnico: "{sintoma_processado}"
 
-Responde de forma técnica, clara e completa combinando os dados destas páginas do manual com o teu conhecimento de manutenção industrial."""
+Atua como engenheiro e técnico sénior: explica a causa técnica exata do erro, os bornes a verificar e o procedimento prático de resolução com base nestas páginas."""
                     
                     try:
                         historico_curto = st.session_state.mensagens[-4:]
