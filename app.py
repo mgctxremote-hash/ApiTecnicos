@@ -14,32 +14,112 @@ from groq import Groq
 import difflib
 
 # ---------------------------------------------------------
-# CONFIGURAÇÃO DE PÁGINA
+# CONFIGURAÇÃO DE PÁGINA & ESTILO FUTURISTA 2026
 # ---------------------------------------------------------
-st.set_page_config(page_title="Assistente MGC - Manuais", page_icon="🔧", layout="centered")
+st.set_page_config(page_title="Assistente MGC 2026", page_icon="⚡", layout="centered")
 
-# APENAS PARA USO LOCAL NO PC (Deixa vazio "" se fores enviar para o GitHub)
+st.markdown("""
+<style>
+    /* Estilo Industrial Futurista 2026 - MGC */
+    .stApp {
+        background-color: #050810;
+        background-image: radial-gradient(circle at top right, #0a1128 0%, #050810 100%);
+        color: #e2e8f0;
+        font-family: 'Segoe UI', Roboto, Helvetica, sans-serif;
+    }
+    .sidebar .stSidebar {
+        background-color: rgba(10, 15, 30, 0.8) !important;
+        backdrop-filter: blur(12px);
+        border-right: 1px solid rgba(56, 189, 248, 0.2);
+    }
+    h1, h2, h3 {
+        color: #38bdf8 !important;
+        text-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+        letter-spacing: -0.5px;
+    }
+    .stTextInput input, .stSelectbox div[data-baseweb="select"] {
+        background-color: rgba(30, 41, 59, 0.7) !important;
+        color: #f8fafc !important;
+        border: 1px solid #334155 !important;
+        border-radius: 8px !important;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .stTextInput input:focus {
+        border-color: #38bdf8 !important;
+        box-shadow: 0 0 8px rgba(56, 189, 248, 0.5) !important;
+    }
+    .stButton button {
+        background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+        color: white;
+        border: 1px solid rgba(56, 189, 248, 0.4);
+        border-radius: 8px;
+        font-weight: 600;
+        box-shadow: 0 4px 15px rgba(2, 132, 199, 0.4);
+        transition: all 0.3s ease;
+    }
+    .stButton button:hover {
+        background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+        box-shadow: 0 6px 20px rgba(14, 165, 233, 0.6);
+        transform: translateY(-2px);
+        border: 1px solid #38bdf8;
+    }
+    div.stChatMessage {
+        background: rgba(30, 41, 59, 0.65);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# VARIÁVEIS GLOBAIS E PASTAS
+# ---------------------------------------------------------
 CHAVE_LOCAL_FIXA = ""
-
-# Pasta onde ficam guardados os manuais fixos
 PASTA_MANUAIS = "manuais"
 os.makedirs(PASTA_MANUAIS, exist_ok=True)
-
-# Ficheiro local para persistir a chave API
 FICHEIRO_CONFIG_LOCAL = ".groq_key.json"
-
-# Cache global em memória para traduções (Thread-safe)
+FICHEIRO_HISTORICO = "historico_chat.json"
 CACHE_TRADUCOES = {}
 
 # ---------------------------------------------------------
-# INICIALIZAÇÃO DE SESSÃO E LOGIN
+# GESTÃO DE SESSÃO PERSISTENTE E MEMÓRIA
 # ---------------------------------------------------------
+def carregar_historico_chat():
+    """Recupera o histórico da memória se o browser for atualizado."""
+    if os.path.exists(FICHEIRO_HISTORICO):
+        try:
+            with open(FICHEIRO_HISTORICO, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def guardar_historico_chat(mensagens):
+    """Guarda a conversa em tempo real para não perder contexto."""
+    try:
+        with open(FICHEIRO_HISTORICO, "w", encoding="utf-8") as f:
+            json.dump(mensagens, f)
+    except Exception:
+        pass
+
+# Verifica Sessão através dos parâmetros do URL (evita voltar ao Login)
+params = st.query_params
+
 if "autenticado" not in st.session_state:
-    st.session_state.autenticado = False
+    if params.get("autenticado") == "true" and params.get("user"):
+        st.session_state.autenticado = True
+        st.session_state.utilizador_atual = params.get("user")
+    else:
+        st.session_state.autenticado = False
+
 if "utilizador_atual" not in st.session_state:
     st.session_state.utilizador_atual = ""
 if "mensagens" not in st.session_state:
-    st.session_state.mensagens = []
+    st.session_state.mensagens = carregar_historico_chat()
 if "pdf_processado" not in st.session_state:
     st.session_state.pdf_processado = False
 if "textos_paginas" not in st.session_state:
@@ -60,7 +140,7 @@ if "pagina_ativa" not in st.session_state:
     st.session_state.pagina_ativa = None
 
 # ---------------------------------------------------------
-# FUNÇÕES DE TRADUÇÃO INTERNA (TEXTO E IMAGEM)
+# FUNÇÕES DE TRADUÇÃO MELHORADA (EM BLOCOS)
 # ---------------------------------------------------------
 def chamar_tradutor_pt(texto, retornar_idioma=False):
     texto_limpo = texto.strip()
@@ -70,21 +150,28 @@ def chamar_tradutor_pt(texto, retornar_idioma=False):
     if not retornar_idioma and texto_limpo in CACHE_TRADUCOES:
         return CACHE_TRADUCOES[texto_limpo]
 
+    # Divide textos muito grandes para evitar bloqueio da API do Google
+    blocos = [texto_limpo[i:i+1000] for i in range(0, len(texto_limpo), 1000)]
+    texto_traduzido_final = ""
+    idioma_origem = "pt"
+
     try:
-        url = (
-            "https://translate.googleapis.com/translate_a/single?client=gtx"
-            f"&sl=auto&tl=pt-PT&dt=t&q={urllib.parse.quote(texto_limpo)}"
-        )
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=6) as response:
-            dados = json.loads(response.read().decode("utf-8"))
-            texto_traduzido = "".join([parte[0] for parte in dados[0] if parte[0]])
-            idioma_origem = dados[2] if len(dados) > 2 else "pt"
-            
-            CACHE_TRADUCOES[texto_limpo] = texto_traduzido
-            if retornar_idioma:
-                return texto_traduzido, idioma_origem
-            return texto_traduzido
+        for bloco in blocos:
+            url = (
+                "https://translate.googleapis.com/translate_a/single?client=gtx"
+                f"&sl=auto&tl=pt-PT&dt=t&q={urllib.parse.quote(bloco)}"
+            )
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=6) as response:
+                dados = json.loads(response.read().decode("utf-8"))
+                texto_traduzido_final += "".join([parte[0] for parte in dados[0] if parte[0]])
+                if len(dados) > 2:
+                    idioma_origem = dados[2]
+                
+        CACHE_TRADUCOES[texto_limpo] = texto_traduzido_final
+        if retornar_idioma:
+            return texto_traduzido_final, idioma_origem
+        return texto_traduzido_final
     except Exception:
         return (texto, "pt") if retornar_idioma else texto
 
@@ -113,7 +200,7 @@ def limpar_caracteres_pdf(texto):
     return texto.encode("latin-1", "ignore").decode("latin-1")
 
 # ---------------------------------------------------------
-# GESTÃO DE CHAVES E CONFIGURAÇÃO
+# GESTÃO DE CHAVES
 # ---------------------------------------------------------
 def obter_chave_oculta():
     if CHAVE_LOCAL_FIXA.strip():
@@ -123,7 +210,6 @@ def obter_chave_oculta():
             return st.secrets["GROQ_API_KEY"].strip()
     except Exception:
         pass
-    
     if os.path.exists(FICHEIRO_CONFIG_LOCAL):
         try:
             with open(FICHEIRO_CONFIG_LOCAL, "r", encoding="utf-8") as f:
@@ -132,7 +218,6 @@ def obter_chave_oculta():
                     return dados["groq_key"].strip()
         except Exception:
             pass
-            
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def guardar_chave_local(api_key):
@@ -151,22 +236,22 @@ def obter_pin_seguro():
     return "tecnicos4321"
 
 # ---------------------------------------------------------
-# TELA DE LOGIN OBRIGATÓRIA
+# TELA DE LOGIN OBRIGATÓRIA (COM PERSISTÊNCIA NA NUVEM)
 # ---------------------------------------------------------
 if not st.session_state.autenticado:
-    st.markdown("<h2 style='text-align: center;'>🔧 Assistente MGC - Manuais Técnicos</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: gray;'>Introduza as credenciais da equipa para aceder à central.</p>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>⚡ MGC 2026</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #94a3b8;'>Sistema Inteligente de Diagnóstico Industrial</p>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form("form_login"):
-            utilizador_input = st.text_input("Nome de Utilizador")
+            utilizador_input = st.text_input("Nome do Técnico (Ex: Bruno, Alexandre, João)")
             chave_input = st.text_input("Chave de Acesso MGC", type="password")
             
             chave_sistema = obter_chave_oculta()
             api_key_input = ""
             if not chave_sistema:
-                api_key_input = st.text_input("Groq API Key (Primeiro acesso)", type="password", help="Obtenha gratuitamente em console.groq.com/keys")
+                api_key_input = st.text_input("Groq API Key (Apenas no Primeiro Acesso)", type="password")
             
             submeter = st.form_submit_button("Entrar no Sistema", use_container_width=True)
             
@@ -177,14 +262,18 @@ if not st.session_state.autenticado:
                     st.session_state.utilizador_atual = utilizador_input.strip()
                     if api_key_input.strip():
                         guardar_chave_local(api_key_input.strip())
-                    st.success("Autenticação bem-sucedida! A carregar...")
+                    
+                    # Salva login no URL para não voltar a pedir ao atualizar a página
+                    st.query_params["autenticado"] = "true"
+                    st.query_params["user"] = utilizador_input.strip()
+                    st.success("Acesso Concedido. Bem-vindo.")
                     st.rerun()
                 else:
-                    st.error("Chave de Acesso MGC incorreta ou Nome de Usuário em falta.")
+                    st.error("Falha na autenticação: Verifique a Chave de Acesso.")
     st.stop()
 
 # ---------------------------------------------------------
-# FUNÇÕES CORE DE PROCESSAMENTO DE PDF E MOTOR DE BUSCA OTIMIZADO
+# PROCESSAMENTO DE PDF E MOTOR DE BUSCA AVANÇADO
 # ---------------------------------------------------------
 def listar_manuais_fixos():
     manuais = {}
@@ -200,6 +289,8 @@ def listar_manuais_fixos():
 def processar_bytes_pdf(pdf_bytes, ativar_traducao=False):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     textos_originais = []
+    
+    # Lê ABSOLUTAMENTE TODAS AS PÁGINAS do documento
     for num_pagina in range(len(doc)):
         texto = doc[num_pagina].get_text("text").strip()
         if not texto:
@@ -214,20 +305,20 @@ def processar_bytes_pdf(pdf_bytes, ativar_traducao=False):
     st.session_state.idioma_manual = idioma
     
     if ativar_traducao and not idioma.startswith("pt"):
-        barra = st.progress(0, text=f"A traduzir manual para Português...")
+        barra = st.progress(0, text=f"A traduzir manual completo para Português...")
         textos_traduzidos = list(textos_originais)
         
         def traduzir_pagina(idx_texto):
             idx, txt = idx_texto
             if "[Página sem texto" in txt:
                 return idx, txt
-            return idx, chamar_tradutor_pt(txt[:3500])
+            return idx, chamar_tradutor_pt(txt[:4000])
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             total = len(textos_originais)
             for concluido, (idx, txt_pt) in enumerate(executor.map(traduzir_pagina, enumerate(textos_originais)), 1):
                 textos_traduzidos[idx] = txt_pt
-                barra.progress(concluido / total, text=f"A traduzir manual ({concluido}/{total} págs)...")
+                barra.progress(concluido / total, text=f"A traduzir página {concluido} de {total}...")
         barra.empty()
         return textos_traduzidos
         
@@ -236,7 +327,7 @@ def processar_bytes_pdf(pdf_bytes, ativar_traducao=False):
 def gerar_indice_bm25(textos):
     corpus_tokenizado = []
     for texto in textos:
-        # Preserva códigos com sinais negativos e alfanuméricos (ex: -999, PT100)
+        # Preserva totalmente números e sinais para a pesquisa não falhar (ex: -999)
         texto_limpo = re.sub(r'[^\w\s\-]', ' ', texto.lower())
         corpus_tokenizado.append(texto_limpo.split())
     return BM25Okapi(corpus_tokenizado)
@@ -265,19 +356,18 @@ def corrigir_termo_por_aproximacao(sintoma, textos_paginas):
             
     return sintoma_corrigido, termo_sugerido
 
-def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=4):
+def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=8):
+    """Retorna uma porção massiva de contexto (8 páginas) para a IA ter visão geral do problema."""
     total_pags = len(textos)
     paginas_alvo = []
 
-    # 1. Procura citação explícita de página (ex: "página 21")
     match_pag_pergunta = re.search(r'p[áa]g(?:ina)?\.?\s*(\d+)', sintoma, re.IGNORECASE)
     if match_pag_pergunta:
         pag_citada = int(match_pag_pergunta.group(1))
         if 1 <= pag_citada <= total_pags:
             paginas_alvo.append(pag_citada)
 
-    # 2. DETETOR DIRETO DE CÓDIGOS DE ERRO E SINAIS NEGATIVOS (ex: -999, 999, PT100)
-    # Extrai números isolados ou com sinal negativo
+    # Detetor rigoroso de códigos de erro
     padrao_numerico = re.findall(r'\-?\d+', sintoma)
     for idx, texto_pag in enumerate(textos):
         for num in padrao_numerico:
@@ -286,7 +376,6 @@ def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=
                 if num_p not in paginas_alvo:
                     paginas_alvo.append(num_p)
 
-    # 3. Pesquisa algorítmica BM25 com preservação de termos técnicos
     sintoma_limpo = re.sub(r'[^\w\s\-]', ' ', sintoma.lower())
     tokenized_query = sintoma_limpo.split()
     scores = bm25.get_scores(tokenized_query)
@@ -308,9 +397,9 @@ def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=
         return "", []
 
     contexto = ""
-    for num_p in paginas_alvo[:5]:
+    for num_p in paginas_alvo[:8]: # Envia as 8 páginas mais relevantes ao mesmo tempo para não perder detalhes
         texto_limpo = re.sub(r'\n+', '\n', textos[num_p - 1])
-        etiqueta = " (PÁGINA ATUALMENTE ABERTA PELO TÉCNICO)" if num_p == pagina_atual else ""
+        etiqueta = " (PÁGINA ATUALMENTE EM FOCO PELO TÉCNICO)" if num_p == pagina_atual else ""
         contexto += f"\n\n--- PÁGINA {num_p}{etiqueta} ---\n{texto_limpo}"
 
     return contexto, paginas_alvo
@@ -386,7 +475,8 @@ def listar_modelos_chat_groq(api_key):
             if not any(b in m.id.lower() for b in palavras_bloqueadas):
                 modelos_filtrados.append(m.id)
                 
-        modelos_filtrados.sort(key=lambda n: 0 if "70b" in n.lower() else (1 if "32b" in n.lower() else 2))
+        # Força o modelo mais potente possível para raciocínio de engenharia complexo
+        modelos_filtrados.sort(key=lambda n: 0 if ("70b" in n.lower() or "versatile" in n.lower()) else (1 if "32b" in n.lower() else 2))
     except Exception:
         pass
         
@@ -412,7 +502,7 @@ def gerar_resposta_groq(api_key, prompt_sistema, historico_recente, prompt_utili
                 messages=mensagens_api,
                 model=nome_modelo,
                 temperature=0.15,
-                max_tokens=600,
+                max_tokens=700, # Margem aumentada para explicações completas
                 top_p=0.9,
             )
             return chat_completion.choices[0].message.content, nome_modelo
@@ -420,17 +510,15 @@ def gerar_resposta_groq(api_key, prompt_sistema, historico_recente, prompt_utili
             ultimo_erro = str(e)
             continue
             
-    raise Exception(f"Nenhum modelo disponível respondeu. Último erro: {ultimo_erro}")
+    raise Exception(f"Nenhum modelo respondeu. Erro: {ultimo_erro}")
 
 # ---------------------------------------------------------
-# INTERFACE PRINCIPAL (STREAMLIT)
+# INTERFACE LATERAL 2026 E NAVEGAÇÃO
 # ---------------------------------------------------------
-st.title("🔧 Assistente MGC - Manuais")
-
 api_key = obter_chave_oculta()
 
 with st.sidebar:
-    st.success(f"👤 Técnico: **{st.session_state.utilizador_atual}**")
+    st.markdown(f"### 👤 Técnico: `{st.session_state.utilizador_atual}`")
     st.divider()
     
     st.header("📚 Manuais da Máquina")
@@ -441,16 +529,16 @@ with st.sidebar:
     bytes_para_processar = None
 
     if opcoes_select:
-        manual_escolhido_nome = st.selectbox("Selecionar Manual Fixo:", options=opcoes_select, index=0)
+        manual_escolhido_nome = st.selectbox("Manual Fixo:", options=opcoes_select, index=0)
 
-    with st.expander("➕ Adicionar / Carregar PDF"):
-        ficheiro_upload = st.file_uploader("Escolher ficheiro PDF", type="pdf")
+    with st.expander("➕ Adicionar Novo PDF"):
+        ficheiro_upload = st.file_uploader("Ficheiro PDF", type="pdf")
         if ficheiro_upload is not None:
             caminho_guardar = os.path.join(PASTA_MANUAIS, ficheiro_upload.name)
             if not os.path.exists(caminho_guardar):
                 with open(caminho_guardar, "wb") as f_out:
                     f_out.write(ficheiro_upload.getbuffer())
-                st.success("Manual guardado nos fixos!")
+                st.success("Manual guardado permanentemente!")
                 st.rerun()
             else:
                 manual_escolhido_nome = ficheiro_upload.name
@@ -464,10 +552,10 @@ with st.sidebar:
         st.session_state.pdf_processado = False
         st.session_state.ultimo_pdf_nome = manual_escolhido_nome
 
-    ativar_traducao_manual = st.checkbox("🌐 Ativar Tradução Automática PT (Se estrangeiro)", value=False)
+    ativar_traducao_manual = st.checkbox("🌐 Tradução Total do Manual para PT", value=False)
 
     if bytes_para_processar and not st.session_state.pdf_processado and api_key:
-        with st.spinner(f"A indexar '{manual_escolhido_nome}'..."):
+        with st.spinner(f"A analisar '{manual_escolhido_nome}' na íntegra..."):
             st.session_state.textos_paginas = processar_bytes_pdf(bytes_para_processar, ativar_traducao=ativar_traducao_manual)
             st.session_state.bm25_index = gerar_indice_bm25(st.session_state.textos_paginas)
             listar_modelos_chat_groq(api_key)
@@ -475,25 +563,29 @@ with st.sidebar:
 
     if st.session_state.pdf_processado:
         total_pags = len(st.session_state.textos_paginas)
-        st.success(f"Ativo: {st.session_state.ultimo_pdf_nome} ({total_pags} págs)")
+        st.success(f"Status: Pronto ({total_pags} págs lidas)")
         
-        traduzir_img_op = st.checkbox("Traduzir textos na imagem para PT", value=ativar_traducao_manual)
+        traduzir_img_op = st.checkbox("Traduzir textos no ecrã", value=ativar_traducao_manual)
         
-        pag_selecionada = st.number_input("Página em leitura / foco:", min_value=1, max_value=total_pags, value=st.session_state.pagina_ativa or 1, step=1)
+        pag_selecionada = st.number_input("Página em foco:", min_value=1, max_value=total_pags, value=st.session_state.pagina_ativa or 1, step=1)
         st.session_state.pagina_ativa = pag_selecionada
         
         st.divider()
-        if st.button("🗑️ Limpar Conversa", use_container_width=True, type="secondary"):
+        if st.button("🗑️ Limpar Conversa Atual", use_container_width=True):
             st.session_state.mensagens = []
+            guardar_historico_chat([])
             st.rerun()
             
-        if st.button("🚪 Terminar Sessão", use_container_width=True):
+        if st.button("🚪 Encerrar Sessão", use_container_width=True):
             st.session_state.autenticado = False
+            st.query_params.clear()
             st.rerun()
     else:
         traduzir_img_op = False
 
-# Histórico de Mensagens
+# ---------------------------------------------------------
+# HISTÓRICO DE MENSAGENS E RENDERING DA IMAGEM
+# ---------------------------------------------------------
 total_paginas_doc = len(st.session_state.textos_paginas)
 
 for idx_msg, msg in enumerate(st.session_state.mensagens):
@@ -502,108 +594,115 @@ for idx_msg, msg in enumerate(st.session_state.mensagens):
         if "num_pagina" in msg and st.session_state.pdf_processado:
             pag_atual = msg["num_pagina"]
             
-            with st.spinner(f"A gerar esquema (Página {pag_atual})..."):
+            with st.spinner(f"A gerar e renderizar esquema da Página {pag_atual}..."):
                 img_exibir = extrair_imagem_pagina(pag_atual, traduzir_visualmente=traduzir_img_op, nivel_zoom=3.5)
             
-            st.image(img_exibir, caption=f"Página {pag_atual} de {total_paginas_doc} (Clique no ícone de expandir para zoom em ecrã cheio)", use_container_width=True)
+            st.image(img_exibir, caption=f"Página {pag_atual} / {total_paginas_doc} (Expanda para aplicar zoom)", use_container_width=True)
             
             col_ant, col_meio, col_prox = st.columns([1, 1, 1])
             with col_ant:
-                if st.button(f"⬅️ Página {pag_atual - 1}", key=f"ant_{idx_msg}_{pag_atual}", disabled=(pag_atual <= 1), use_container_width=True):
+                if st.button(f"⬅️ Ant. {pag_atual - 1}", key=f"ant_{idx_msg}_{pag_atual}", disabled=(pag_atual <= 1), use_container_width=True):
                     st.session_state.mensagens[idx_msg]["num_pagina"] = pag_atual - 1
                     st.session_state.pagina_ativa = pag_atual - 1
+                    guardar_historico_chat(st.session_state.mensagens)
                     st.rerun()
             with col_meio:
-                st.markdown(f"<div style='text-align:center; padding-top:6px; font-weight:bold;'>📄 Pág. {pag_atual} / {total_paginas_doc}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align:center; padding-top:6px; font-weight:bold; color:#38bdf8;'>Pág. {pag_atual} / {total_paginas_doc}</div>", unsafe_allow_html=True)
             with col_prox:
-                if st.button(f"Página {pag_atual + 1} ➡️", key=f"prox_{idx_msg}_{pag_atual}", disabled=(pag_atual >= total_paginas_doc), use_container_width=True):
+                if st.button(f"Seg. {pag_atual + 1} ➡️", key=f"prox_{idx_msg}_{pag_atual}", disabled=(pag_atual >= total_paginas_doc), use_container_width=True):
                     st.session_state.mensagens[idx_msg]["num_pagina"] = pag_atual + 1
                     st.session_state.pagina_ativa = pag_atual + 1
+                    guardar_historico_chat(st.session_state.mensagens)
                     st.rerun()
 
-# Input de Sintoma
-sintoma = st.chat_input("Faz uma pergunta sobre a página ou descreve uma avaria...")
+# ---------------------------------------------------------
+# CÉREBRO DE ENGENHARIA - CONTINUIDADE E DIAGNÓSTICO
+# ---------------------------------------------------------
+sintoma = st.chat_input("Ex: 'Já testei a continuidade e está boa, mas o erro -999 continua. O que meço a seguir?'")
 
 if sintoma:
     if not st.session_state.pdf_processado:
-        st.warning("Seleciona ou carrega primeiro um manual PDF na barra lateral!")
+        st.warning("Selecione um manual na barra lateral primeiro.")
     else:
         sintoma_processado, termo_sugerido = corrigir_termo_por_aproximacao(sintoma, st.session_state.textos_paginas)
         
         texto_exibir_utilizador = sintoma
         if termo_sugerido:
-            texto_exibir_utilizador = f"{sintoma} *(Assumi que procuravas por **{termo_sugerido}** — confirma-se?)*"
+            texto_exibir_utilizador = f"{sintoma} *(Referência corrigida: **{termo_sugerido}**)*"
             
         with st.chat_message("user"):
             st.markdown(texto_exibir_utilizador)
             
         with st.chat_message("assistant"):
-            with st.spinner("A consultar o manual e a analisar o esquema..."):
+            with st.spinner("A cruzar os teus testes com todas as páginas do esquema..."):
                 contexto_relevante, paginas = procurar_paginas_relevantes(
                     sintoma_processado, 
                     st.session_state.textos_paginas, 
                     st.session_state.bm25_index,
                     pagina_atual=st.session_state.pagina_ativa,
-                    top_k=4
+                    top_k=8 # Varre 8 páginas massivas para não deixar escapar nenhum detalhe
                 )
                 
                 if not paginas:
-                    st.warning("Não foi possível localizar informação relevante no manual.")
+                    st.warning("Não encontrei referências exatas, mas irei guiar-te com o meu conhecimento de engenharia.")
+                    pagina_principal = st.session_state.pagina_ativa
                 else:
                     pagina_principal = paginas[0]
                     
-                    # PROMPT TÉCNICO DE ENGENHARIA AVANÇADO
-                    prompt_sistema = """És um engenheiro eletromecânico e técnico sénior de manutenção, instrumentação e automação industrial em Portugal, especialista em centrais térmicas e caldeiras de biomassa.
-A tua missão absoluta é guiar o técnico no chão de fábrica no diagnóstico e resolução exata de avarias, cruzando rigorosamente os dados do manual técnico e esquemas elétricos fornecidos com a realidade física dos equipamentos.
+                prompt_sistema = """És um Engenheiro Eletromecânico e Técnico Sénior de Automação Industrial a guiar um técnico no terreno de uma central de biomassa.
 
-DIRETRIZES DE RESPOSTA TÉCNICA:
-1. Escreve EXCLUSIVAMENTE em Português de Portugal correto, técnico, profissional e direto (usa terminologia de chão de fábrica: "bornes", "cablagem", "malha 4-20mA", "sonda PT100", "alimentação 24VDC", "cartão de entradas analógicas do PLC", "rotura de cabo", "mau contacto", "sinal fora de escala").
-2. INTERPRETAÇÃO DE CÓDIGOS DE ERRO (como -999): Explica tecnicamente o significado do erro (por exemplo, o código -999 indica tipicamente falha de leitura analógica, sensor em circuito aberto, rotura de cabo na malha da sonda de temperatura ou canal desconfigurado no PLC). Indica os bornes, pinos e cabos específicos a testar no terreno ou no quadro elétrico.
-3. Raciocínio de Engenheiro: Sê pragmático. Mostra os passos de verificação lógica (ex: 1. Medir tensão de alimentação 24VDC no borne X; 2. Verificar continuidade do cabo Blindado LiYCY; 3. Validar resistência óhmica da PT100).
-4. Indicação de Página: Sempre que baseares a resposta num documento, indica obrigatoriamente a página no formato exato [Página X]."""
+REGRAS DE RESPOSTA OBRIGATÓRIAS:
+1. NUNCA fuja do assunto nem ignores a mensagem do técnico. Lê o histórico da conversa: se o técnico já testou X e diz que está bom, AVANÇA para a causa Y (ex: "Como já testaste a sonda no campo, vamos testar o cartão do PLC no quadro.").
+2. Lê as páginas fornecidas e funde essa informação com o teu conhecimento técnico real. 
+3. Quando houver códigos de erro (como -999 ou sinais fora de escala), traduz isso para a realidade física: o que está partido, em curto, desligado ou desconfigurado? 
+4. Dá passos claros de diagnóstico prático com multímetro (tensão, resistência, 4-20mA) indicando os bornes e pinos exatos listados no PDF.
+5. Usa sempre Português de Portugal industrial (bornes, malha, cartão analógico, PT100). Indica as páginas referidas (ex: [Página X])."""
 
-                    prompt_utilizador = f"""Técnico em sessão: {st.session_state.utilizador_atual}
-Manual ativo: {st.session_state.ultimo_pdf_nome}
-Página em foco no ecrã do técnico: [Página {st.session_state.pagina_ativa}]
-Páginas detetadas como mais relevantes no manual: {paginas}
+                prompt_utilizador = f"""Técnico a operar: {st.session_state.utilizador_atual}
+Manual: {st.session_state.ultimo_pdf_nome}
+Página atual no ecrã: [Página {st.session_state.pagina_ativa}]
+Top páginas lidas: {paginas}
 
-Dados extraídos do manual e esquemas elétricos:
+TEXTOS EXTRAÍDOS DO MANUAL:
 {contexto_relevante}
 
-Sintoma ou pergunta técnica colocada pelo técnico: "{sintoma_processado}"
+MENSAGEM/SINTOMA RELATADO AGORA PELO TÉCNICO: "{sintoma_processado}"
 
-Atua como engenheiro e técnico sénior: explica a causa técnica exata do erro, os bornes a verificar e o procedimento prático de resolução com base nestas páginas."""
+(Não repitas os testes que o técnico já fez. Dá-lhe a próxima instrução técnica baseada nos esquemas acima.)"""
+                
+                try:
+                    # Envia as últimas 10 mensagens para a IA reter o raciocínio contínuo perfeitamente
+                    historico_alargado = st.session_state.mensagens[-10:]
+                    resposta_ai, modelo_usado = gerar_resposta_groq(api_key, prompt_sistema, historico_alargado, prompt_utilizador)
                     
-                    try:
-                        historico_curto = st.session_state.mensagens[-4:]
-                        resposta_ai, modelo_usado = gerar_resposta_groq(api_key, prompt_sistema, historico_curto, prompt_utilizador)
+                    st.session_state.mensagens.append({"role": "user", "content": texto_exibir_utilizador})
+                    
+                    match_pagina = re.search(r'\[P[áa]gina\s*(\d+)\]', resposta_ai, re.IGNORECASE)
+                    if match_pagina:
+                        num_pag_ia = int(match_pagina.group(1))
+                        num_pagina_detectada = num_pag_ia if (1 <= num_pag_ia <= total_paginas_doc) else pagina_principal
+                    else:
+                        num_pagina_detectada = pagina_principal
                         
-                        st.session_state.mensagens.append({"role": "user", "content": texto_exibir_utilizador})
-                        
-                        match_pagina = re.search(r'\[P[áa]gina\s*(\d+)\]', resposta_ai, re.IGNORECASE)
-                        if match_pagina:
-                            num_pag_ia = int(match_pagina.group(1))
-                            num_pagina_detectada = num_pag_ia if (1 <= num_pag_ia <= total_paginas_doc) else pagina_principal
-                        else:
-                            num_pagina_detectada = pagina_principal
-                            
-                        st.session_state.pagina_ativa = num_pagina_detectada
-                        
-                        dados_resposta = {
-                            "role": "assistant",
-                            "content": resposta_ai,
-                            "num_pagina": num_pagina_detectada
-                        }
-                        st.session_state.mensagens.append(dados_resposta)
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.session_state.mensagens.append({"role": "user", "content": texto_exibir_utilizador})
-                        st.error(f"Erro na comunicação com o Groq: {e}")
-                        dados_fallback = {
-                            "role": "assistant",
-                            "content": f"A mostrar diretamente a **[Página {pagina_principal}]** encontrada no manual:",
-                            "num_pagina": pagina_principal
-                        }
-                        st.session_state.mensagens.append(dados_fallback)
-                        st.rerun()
+                    st.session_state.pagina_ativa = num_pagina_detectada
+                    
+                    dados_resposta = {
+                        "role": "assistant",
+                        "content": resposta_ai,
+                        "num_pagina": num_pagina_detectada
+                    }
+                    st.session_state.mensagens.append(dados_resposta)
+                    guardar_historico_chat(st.session_state.mensagens)
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.session_state.mensagens.append({"role": "user", "content": texto_exibir_utilizador})
+                    st.error(f"Erro no cérebro da IA: {e}")
+                    dados_fallback = {
+                        "role": "assistant",
+                        "content": f"A mostrar a **[Página {pagina_principal}]** extraída do manual:",
+                        "num_pagina": pagina_principal
+                    }
+                    st.session_state.mensagens.append(dados_fallback)
+                    guardar_historico_chat(st.session_state.mensagens)
+                    st.rerun()
