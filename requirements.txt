@@ -1,6 +1,6 @@
 streamlit
 PyMuPDF
-google-generativeai
+groq
 numpy
 pillow
 rank-bm25
