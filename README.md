@@ -1,4 +1,4 @@
-[app.py](https://github.com/user-attachments/files/34798087/app.py)
+[app.py](https://github.com/user-attachments/files/34798236/app.py)
 import streamlit as st
 import fitz  # PyMuPDF
 import google.generativeai as genai
