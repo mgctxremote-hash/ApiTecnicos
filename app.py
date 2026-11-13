@@ -160,7 +160,7 @@ if not st.session_state.autenticado:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form("form_login"):
-            utilizador_input = st.text_input("Nome de Usuário (Ex: Bruno, Alexandre, João)")
+            utilizador_input = st.text_input("Nome de Utilizador")
             chave_input = st.text_input("Chave de Acesso MGC", type="password")
             
             chave_sistema = obter_chave_oculta()
