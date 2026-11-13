@@ -44,6 +44,8 @@ if "idioma_manual" not in st.session_state:
     st.session_state.idioma_manual = "pt"
 if "cache_imagens" not in st.session_state:
     st.session_state.cache_imagens = {}
+if "pagina_ativa" not in st.session_state:
+    st.session_state.pagina_ativa = None
 
 # ---------------------------------------------------------
 # FUNÇÕES DE TRADUÇÃO INTERNA (TEXTO E IMAGEM)
@@ -129,11 +131,11 @@ def processar_pdf(ficheiro):
     ficheiro.seek(0)
     st.session_state.pdf_bytes = ficheiro.read()
     st.session_state.cache_imagens = {}
+    st.session_state.pagina_ativa = 1
     
     idioma = detetar_idioma_pdf(textos_originais)
     st.session_state.idioma_manual = idioma
     
-    # Se não estiver em Português, traduz o texto de todas as páginas em paralelo
     if not idioma.startswith("pt"):
         barra = st.progress(0, text=f"Manual detetado em '{idioma.upper()}'. A traduzir automaticamente para Português...")
         textos_traduzidos = list(textos_originais)
@@ -162,26 +164,51 @@ def gerar_indice_bm25(textos):
         corpus_tokenizado.append(texto_limpo.split())
     return BM25Okapi(corpus_tokenizado)
 
-def procurar_paginas_relevantes(sintoma, textos, bm25, top_k=2):
-    """Encontra as páginas usando pontuação algorítmica exata."""
+def procurar_paginas_relevantes(sintoma, textos, bm25, pagina_atual=None, top_k=4):
+    """
+    Combina a página que o utilizador está a ler no momento (ou que citou na pergunta)
+    com as páginas mais relevantes de todo o manual encontradas pelo BM25.
+    """
+    total_pags = len(textos)
+    paginas_alvo = []
+
+    # 1. Verifica se o técnico mencionou explicitamente uma página na pergunta (ex: "página 21")
+    match_pag_pergunta = re.search(r'p[áa]g(?:ina)?\.?\s*(\d+)', sintoma, re.IGNORECASE)
+    if match_pag_pergunta:
+        pag_citada = int(match_pag_pergunta.group(1))
+        if 1 <= pag_citada <= total_pags:
+            paginas_alvo.append(pag_citada)
+
+    # 2. Pesquisa em todo o manual com BM25
     sintoma_limpo = re.sub(r'[^\w\s]', ' ', sintoma.lower())
     tokenized_query = sintoma_limpo.split()
-    
     scores = bm25.get_scores(tokenized_query)
-    
-    if max(scores) == 0:
-        return "Nenhuma palavra-chave do sintoma encontrada no manual.", []
-        
     indices_top = np.argsort(scores)[::-1][:top_k]
-    
-    contexto = ""
-    paginas_alvo = []
+
     for idx in indices_top:
         if scores[idx] > 0:
-            texto_limpo = re.sub(r'\n+', '\n', textos[idx])
-            contexto += f"\n\n--- PÁGINA {idx + 1} ---\n{texto_limpo}"
-            paginas_alvo.append(int(idx + 1))
-        
+            num_p = int(idx + 1)
+            if num_p not in paginas_alvo:
+                paginas_alvo.append(num_p)
+
+    # 3. Inclui SEMPRE a página que o técnico tem aberta no ecrã para perguntas de seguimento
+    if pagina_atual and (1 <= pagina_atual <= total_pags):
+        if not paginas_alvo:
+            # Se a pergunta não tiver palavras-chave novas, a página aberta passa a ser a principal
+            paginas_alvo.append(pagina_atual)
+        elif pagina_atual not in paginas_alvo:
+            # Insere a página aberta logo no início para a IA não perder o contexto visual do técnico
+            paginas_alvo.insert(0, pagina_atual)
+
+    if not paginas_alvo:
+        return "", []
+
+    contexto = ""
+    for num_p in paginas_alvo[:5]:  # Envia até 5 páginas completas do manual para dar contexto máximo
+        texto_limpo = re.sub(r'\n+', '\n', textos[num_p - 1])
+        etiqueta = " (PÁGINA ATUALMENTE ABERTA PELO TÉCNICO)" if num_p == pagina_atual else ""
+        contexto += f"\n\n--- PÁGINA {num_p}{etiqueta} ---\n{texto_limpo}"
+
     return contexto, paginas_alvo
 
 def extrair_imagem_pagina(num_pagina, traduzir_visualmente=True):
@@ -292,22 +319,24 @@ def listar_modelos_chat_groq(api_key):
     st.session_state.modelos_chat_validos = modelos_filtrados
     return modelos_filtrados
 
-def gerar_resposta_groq(api_key, prompt_sistema, prompt_utilizador):
-    """Gera a resposta com temperatura baixa para impedir repetições e erros."""
+def gerar_resposta_groq(api_key, prompt_sistema, historico_recente, prompt_utilizador):
+    """Gera a resposta enviando também o histórico recente da conversa para manter o contexto."""
     client = Groq(api_key=api_key)
     modelos = listar_modelos_chat_groq(api_key)
     ultimo_erro = ""
     
+    mensagens_api = [{"role": "system", "content": prompt_sistema}]
+    for msg_ant in historico_recente:
+        mensagens_api.append({"role": msg_ant["role"], "content": msg_ant["content"]})
+    mensagens_api.append({"role": "user", "content": prompt_utilizador})
+    
     for nome_modelo in modelos:
         try:
             chat_completion = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": prompt_sistema},
-                    {"role": "user", "content": prompt_utilizador}
-                ],
+                messages=mensagens_api,
                 model=nome_modelo,
-                temperature=0.1,
-                max_tokens=350,
+                temperature=0.15,
+                max_tokens=600,
                 top_p=0.9,
             )
             return chat_completion.choices[0].message.content, nome_modelo
@@ -360,6 +389,17 @@ with st.sidebar:
             value=manual_estrangeiro,
             help="Ativa automaticamente quando o manual não está em Português."
         )
+        
+        st.divider()
+        pag_selecionada = st.number_input(
+            "Página em leitura / foco:",
+            min_value=1,
+            max_value=total_pags,
+            value=st.session_state.pagina_ativa or 1,
+            step=1,
+            help="A IA terá sempre em conta a página que estás a ler, além de pesquisar no resto do manual."
+        )
+        st.session_state.pagina_ativa = pag_selecionada
     else:
         traduzir_img_op = False
 
@@ -381,7 +421,6 @@ for idx_msg, msg in enumerate(st.session_state.mensagens):
                 use_container_width=True
             )
             
-            # Botões para passar as páginas para o lado (Anterior / Seguinte)
             col_ant, col_meio, col_prox = st.columns([1, 1, 1])
             with col_ant:
                 if st.button(
@@ -391,6 +430,7 @@ for idx_msg, msg in enumerate(st.session_state.mensagens):
                     use_container_width=True
                 ):
                     st.session_state.mensagens[idx_msg]["num_pagina"] = pag_atual - 1
+                    st.session_state.pagina_ativa = pag_atual - 1
                     st.rerun()
             with col_meio:
                 st.markdown(
@@ -405,61 +445,73 @@ for idx_msg, msg in enumerate(st.session_state.mensagens):
                     use_container_width=True
                 ):
                     st.session_state.mensagens[idx_msg]["num_pagina"] = pag_atual + 1
+                    st.session_state.pagina_ativa = pag_atual + 1
                     st.rerun()
 
-# Input de Sintoma
-sintoma = st.chat_input("Descreve a avaria ou palavra-chave (ex: erro -999 sonda da fornalha)...")
+# Input de Sintoma ou Pergunta Direta
+sintoma = st.chat_input("Faz uma pergunta sobre a página ou descreve uma avaria...")
 
 if sintoma:
     if not st.session_state.pdf_processado:
         st.warning("Carrega primeiro o manual PDF na barra lateral!")
     else:
-        st.session_state.mensagens.append({"role": "user", "content": sintoma})
         with st.chat_message("user"):
             st.markdown(sintoma)
             
         with st.chat_message("assistant"):
-            with st.spinner("A analisar esquema e manual..."):
+            with st.spinner("A consultar o manual e a analisar o esquema..."):
                 contexto_relevante, paginas = procurar_paginas_relevantes(
                     sintoma, 
                     st.session_state.textos_paginas, 
-                    st.session_state.bm25_index
+                    st.session_state.bm25_index,
+                    pagina_atual=st.session_state.pagina_ativa,
+                    top_k=4
                 )
                 
                 if not paginas:
-                    st.warning("Nenhuma das palavras digitadas foi encontrada no manual.")
+                    st.warning("Não foi possível localizar informação relevante no manual.")
                 else:
                     pagina_principal = paginas[0]
                     
-                    prompt_sistema = """És um engenheiro e técnico sénior de manutenção industrial em Portugal.
-A tua função é ajudar o técnico no chão de fábrica a localizar componentes e diagnosticar avarias com base nos manuais e esquemas elétricos.
+                    prompt_sistema = """És um engenheiro eletromecânico e técnico sénior de manutenção e automação industrial em Portugal.
+A tua função é responder a dúvidas técnicas e ajudar no diagnóstico de avarias combinando TODOS os dados fornecidos do manual/esquema elétrico com o teu conhecimento sólido de engenharia industrial (eletricidade, instrumentação, sensores de nível/pressão/temperatura/condutividade, laços 4-20mA, PT100, alimentação 24VDC, PLC e quadros elétricos).
 
-REGRAS OBRIGATÓRIAS DE ESCRITA:
-1. Escreve EXCLUSIVAMENTE em Português de Portugal correto, claro e profissional (usa termos como "quadro elétrico", "borne", "cabo", "sonda", "verificar a continuidade", "alimentação 24VDC").
-2. PROIBIDO repetir frases, ideias ou palavras. Sê direto e conciso (máximo de 4 a 5 linhas no total).
-3. Identifica os códigos relevantes da página principal (como 14CT10, 26A3, cabos como 54W6, entradas analógicas, etc.) e indica-os ao técnico.
-4. Indica sempre a página principal no formato [Página X].
-5. Termina com uma única pergunta curta e prática de despiste (ex: "Consegues medir se chegam 24VDC aos bornes da sonda no quadro?")."""
+REGRAS OBRIGATÓRIAS DE RESPOSTA:
+1. Escreve EXCLUSIVAMENTE em Português de Portugal correto, claro e direto, sem repetir frases ou palavras.
+2. RESPOSTA COMPLETA E DIRETA: Se o técnico fizer uma pergunta específica (por exemplo, sobre qual cabo ou pino de um sensor é positivo, negativo, sinal ou terra, ou o significado de um código na página), responde diretamente e de forma completa cruzando os dados do manual (bornes como Uv, I+, Power, Signal, 24VDC, 0V, PE, referências de cabos e sensores) com o teu conhecimento técnico das normas industriais. Nunca ocultes a resposta.
+3. Se o técnico relatar uma avaria, explica a causa técnica, indica os componentes, cabos e bornes exatos a medir no quadro ou no campo e sugere o próximo passo prático de verificação.
+4. Sempre que citares dados do documento, indica a página no formato [Página X]."""
 
-                    prompt_utilizador = f"""Página mais relevante encontrada pelo sistema: [Página {pagina_principal}]
+                    prompt_utilizador = f"""Página em foco no ecrã do técnico: [Página {st.session_state.pagina_ativa}]
+Páginas mais relevantes analisadas no manual: {paginas}
 
-Texto extraído das páginas do manual/esquema elétrico (já traduzido para Português):
+Dados extraídos do manual e esquemas elétricos:
 {contexto_relevante}
 
-Sintoma ou dúvida do técnico: "{sintoma}"
+Pergunta ou sintoma do técnico: "{sintoma}"
 
-Fornece um diagnóstico curto, sem repetições, indicando os componentes a verificar na [Página {pagina_principal}]."""
+Responde de forma técnica, clara e completa combinando os dados destas páginas do manual com o teu conhecimento de manutenção e esquemas elétricos industriais."""
                     
                     try:
-                        resposta_ai, modelo_usado = gerar_resposta_groq(api_key, prompt_sistema, prompt_utilizador)
+                        # Envia as últimas 4 mensagens para a IA manter o fio à meada da conversa
+                        historico_curto = st.session_state.mensagens[-4:]
+                        resposta_ai, modelo_usado = gerar_resposta_groq(
+                            api_key, prompt_sistema, historico_curto, prompt_utilizador
+                        )
                         
+                        # Guarda a pergunta do utilizador no histórico
+                        st.session_state.mensagens.append({"role": "user", "content": sintoma})
+                        
+                        # Determina a página a mostrar na imagem
                         match_pagina = re.search(r'\[P[áa]gina\s*(\d+)\]', resposta_ai, re.IGNORECASE)
                         if match_pagina:
                             num_pag_ia = int(match_pagina.group(1))
-                            num_pagina_detectada = num_pag_ia if num_pag_ia in paginas else pagina_principal
+                            num_pagina_detectada = num_pag_ia if (1 <= num_pag_ia <= total_paginas_doc) else pagina_principal
                         else:
                             num_pagina_detectada = pagina_principal
                             
+                        st.session_state.pagina_ativa = num_pagina_detectada
+                        
                         dados_resposta = {
                             "role": "assistant",
                             "content": resposta_ai,
@@ -469,6 +521,7 @@ Fornece um diagnóstico curto, sem repetições, indicando os componentes a veri
                         st.rerun()
                         
                     except Exception as e:
+                        st.session_state.mensagens.append({"role": "user", "content": sintoma})
                         st.error(f"Erro na comunicação com o Groq: {e}")
                         dados_fallback = {
                             "role": "assistant",
