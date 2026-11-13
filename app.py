@@ -25,8 +25,8 @@ if "bm25_index" not in st.session_state:
     st.session_state.bm25_index = None
 if "pdf_bytes" not in st.session_state:
     st.session_state.pdf_bytes = None
-if "modelo_texto_auto" not in st.session_state:
-    st.session_state.modelo_texto_auto = None
+if "modelo_texto_seguro" not in st.session_state:
+    st.session_state.modelo_texto_seguro = None
 
 # ---------------------------------------------------------
 # FUNÇÕES CORE
@@ -82,36 +82,24 @@ def extrair_imagem_pagina(num_pagina):
     return Image.open(io.BytesIO(imagem_bytes))
 
 def obter_modelo_texto():
-    """Procura dinamicamente o melhor modelo de texto autorizado na tua API Key."""
-    if st.session_state.modelo_texto_auto:
-        return st.session_state.modelo_texto_auto
+    """Garante a escolha de um modelo gratuito seguro (Flash ou Pro clássico), rejeitando modelos experimentais pagos (3.1)."""
+    if st.session_state.modelo_texto_seguro:
+        return st.session_state.modelo_texto_seguro
         
+    # Lista branca rigorosa: apenas modelos conhecidos por terem quota gratuita.
+    modelos_permitidos = ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-1.0-pro"]
+    
     try:
-        modelos_disponiveis = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                modelos_disponiveis.append(m.name)
+        modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # Prioridade 1: Tentar a versão mais recente e rápida do Flash
-        for m in modelos_disponiveis:
-            if '1.5-flash' in m:
-                st.session_state.modelo_texto_auto = m
-                return m
-                
-        # Prioridade 2: Tentar a versão Pro se o Flash não existir na tua região
-        for m in modelos_disponiveis:
-            if 'gemini-pro' in m or '1.0-pro' in m:
-                st.session_state.modelo_texto_auto = m
-                return m
-                
-        # Fallback: usar o primeiro modelo de texto que a Google permitir
-        if modelos_disponiveis:
-            st.session_state.modelo_texto_auto = modelos_disponiveis[0]
-            return modelos_disponiveis[0]
+        for modelo_seguro in modelos_permitidos:
+            if modelo_seguro in modelos_disponiveis:
+                st.session_state.modelo_texto_seguro = modelo_seguro
+                return modelo_seguro
     except Exception:
         pass
         
-    return "gemini-pro" # Último recurso absoluto
+    return "models/gemini-1.5-flash" # Fallback direto, nunca vai ao 3.1
 
 # ---------------------------------------------------------
 # INTERFACE STREAMLIT
@@ -176,7 +164,7 @@ if sintoma:
                     """
                     
                     try:
-                        # Agora usa a função inteligente em vez de "gemini-1.5-flash" estático
+                        # O modelo agora é 100% seguro (Flash ou Pro gratuito)
                         nome_modelo_ativo = obter_modelo_texto() 
                         modelo = genai.GenerativeModel(nome_modelo_ativo)
                         
