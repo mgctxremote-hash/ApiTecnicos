@@ -75,7 +75,7 @@ def obter_google_api_key() -> str:
     if chave_sessao:
         return chave_sessao
 
-    # 2. Ficheiro local guardado pelo site (partilhado enquanto o servidor estiver ativo)
+    # 2. Ficheiro local guardado pelo site
     if FICHEIRO_KEY_LOCAL.exists():
         try:
             dados = json.loads(FICHEIRO_KEY_LOCAL.read_text(encoding="utf-8"))
@@ -84,7 +84,7 @@ def obter_google_api_key() -> str:
         except Exception:
             pass
 
-    # 3. Secrets do Streamlit Cloud ou variáveis de ambiente (fallback opcional)
+    # 3. Secrets do Streamlit Cloud ou variáveis de ambiente (opcional)
     for nome_var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
         try:
             if nome_var in st.secrets and str(st.secrets[nome_var]).strip():
@@ -376,9 +376,10 @@ def _precisa_traduzir(texto: str) -> bool:
 def traduzir_pagina_blocos(caminho: Path, _hash_manual: str, pagina_1idx: int, idioma: str) -> list[dict]:
     if idioma.startswith("pt"):
         return []
-    doc = fitz.open(str(caminho))
-    page = doc.load_page(pagina_1idx - 1)
-    estrutura = page.get_text("dict")
+    with fitz.open(str(caminho)) as doc:
+        page = doc.load_page(pagina_1idx - 1)
+        estrutura = page.get_text("dict")
+
     itens = []
     for bloco in estrutura.get("blocks", []):
         if bloco.get("type") != 0:
@@ -459,17 +460,17 @@ class ManualPDF:
         self.nome = caminho.name
         dados = caminho.read_bytes()
         self.hash = hashlib.md5(dados).hexdigest()[:12]
-        doc = fitz.open(stream=dados, filetype="pdf")
-        self.n_paginas = len(doc)
         self.paginas_texto: list[str] = []
         self.paginas_sem_texto: list[int] = []
 
-        for i in range(self.n_paginas):
-            t = doc.load_page(i).get_text("text").strip()
-            if len(t) < 15:
-                self.paginas_sem_texto.append(i + 1)
-                t = "[Página sem texto pesquisável, apenas esquema/desenho]"
-            self.paginas_texto.append(t)
+        with fitz.open(stream=dados, filetype="pdf") as doc:
+            self.n_paginas = len(doc)
+            for i in range(self.n_paginas):
+                t = doc.load_page(i).get_text("text").strip()
+                if len(t) < 15:
+                    self.paginas_sem_texto.append(i + 1)
+                    t = "[Página sem texto pesquisável, apenas esquema/desenho]"
+                self.paginas_texto.append(t)
 
         amostra = " ".join(t[:300] for t in self.paginas_texto if not t.startswith("[Página sem"))[:1000]
         if amostra.strip():
@@ -501,33 +502,33 @@ def _limpar_latin1(txt: str) -> str:
 
 
 def renderizar_pagina(caminho: str, pagina: int, zoom: float, blocos_trad: list[dict] | None, formato: str) -> tuple[bytes, str]:
-    doc = fitz.open(caminho)
-    page = doc.load_page(pagina - 1)
+    with fitz.open(caminho) as doc:
+        page = doc.load_page(pagina - 1)
 
-    if blocos_trad:
-        for b in blocos_trad:
-            tr_limpa = _limpar_latin1(b.get("traducao", ""))
-            if not tr_limpa:
-                continue
-            rect = fitz.Rect(b["bbox"])
-            largura = max(rect.width, 10.0)
-            page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-            tam = min(b.get("size", 8.0), max(rect.height * 0.85, 4.5))
-            try:
-                w_txt = fitz.get_text_length(tr_limpa, fontname="helv", fontsize=tam)
-            except Exception:
-                w_txt = len(tr_limpa) * tam * 0.55
-            if w_txt > largura and w_txt > 0:
-                tam = max(3.8, tam * (largura / w_txt))
-            pt = fitz.Point(rect.x0, rect.y1 - max(1.0, (rect.height - tam) * 0.25))
-            page.insert_text(pt, tr_limpa, fontsize=tam, fontname="helv", color=(0, 0, 0))
+        if blocos_trad:
+            for b in blocos_trad:
+                tr_limpa = _limpar_latin1(b.get("traducao", ""))
+                if not tr_limpa:
+                    continue
+                rect = fitz.Rect(b["bbox"])
+                largura = max(rect.width, 10.0)
+                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
+                tam = min(b.get("size", 8.0), max(rect.height * 0.85, 4.5))
+                try:
+                    w_txt = fitz.get_text_length(tr_limpa, fontname="helv", fontsize=tam)
+                except Exception:
+                    w_txt = len(tr_limpa) * tam * 0.55
+                if w_txt > largura and w_txt > 0:
+                    tam = max(3.8, tam * (largura / w_txt))
+                pt = fitz.Point(rect.x0, rect.y1 - max(1.0, (rect.height - tam) * 0.25))
+                page.insert_text(pt, tr_limpa, fontsize=tam, fontname="helv", color=(0, 0, 0))
 
-    if formato == "svg":
-        svg_str = page.get_svg_image(text_as_path=False)
-        return svg_str.encode("utf-8"), "image/svg+xml"
+        if formato == "svg":
+            svg_str = page.get_svg_image(text_as_path=False)
+            return svg_str.encode("utf-8"), "image/svg+xml"
 
-    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-    return pix.tobytes("png"), "image/png"
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+        return pix.tobytes("png"), "image/png"
 
 
 def html_visualizador(dados: bytes, mime: str, altura: int = 640) -> str:
@@ -1059,7 +1060,8 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ Limpar conversa", use_container_width=True):
         apagar_historico(utilizador, nome_manual)
-        st.session_state.pop("mensagens", None)
+        st.session_state.mensagens = []
+        st.session_state.pop("fb_pendente", None)
         st.rerun()
     if st.button("🚪 Terminar sessão", use_container_width=True):
         st.session_state.clear()
@@ -1080,10 +1082,15 @@ with st.sidebar:
         )
 
 # ------------------------------------------------------------------ ESTADO DA CONVERSA
-if st.session_state.get("_manual_atual") != (utilizador, nome_manual):
+if (
+    st.session_state.get("_manual_atual") != (utilizador, nome_manual)
+    or "mensagens" not in st.session_state
+):
     st.session_state._manual_atual = (utilizador, nome_manual)
     st.session_state.mensagens = carregar_historico(utilizador, nome_manual)
     st.session_state.pagina = 1
+    st.session_state.pop("fb_pendente", None)
+
 mensagens: list[dict] = st.session_state.mensagens
 
 
@@ -1105,19 +1112,24 @@ if "pagina_pendente" in st.session_state:
 
 with col_ver:
     st.subheader("📐 Esquema / Manual")
-    n = manual.n_paginas
+    n = max(manual.n_paginas, 1)
     st.session_state.pagina = min(max(int(st.session_state.get("pagina", 1)), 1), n)
     c1, c2, c3 = st.columns([1, 2, 1])
     c1.button(
         "⬅️",
+        key="btn_pag_ant",
         on_click=_ir_pagina,
         args=(st.session_state.pagina - 1,),
         disabled=st.session_state.pagina <= 1,
         use_container_width=True,
     )
-    c2.number_input("Página", 1, n, key="pagina", label_visibility="collapsed")
+    if n > 1:
+        c2.number_input("Página", 1, n, key="pagina", label_visibility="collapsed")
+    else:
+        c2.markdown("<div style='text-align:center;padding-top:6px;font-weight:bold'>1 / 1</div>", unsafe_allow_html=True)
     c3.button(
         "➡️",
+        key="btn_pag_prox",
         on_click=_ir_pagina,
         args=(st.session_state.pagina + 1,),
         disabled=st.session_state.pagina >= n,
