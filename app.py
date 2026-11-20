@@ -36,6 +36,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------ CONSTANTES E DIRETÓRIOS
+PIN_ACESSO_PADRAO = "tecnicos4321"
+
 PASTA_MANUAIS = Path("manuais")
 PASTA_DATA = Path("data")
 PASTA_MANWINWIN = PASTA_DATA / "manwinwin"
@@ -64,10 +66,25 @@ def obter_pin_acesso() -> str:
             return str(st.secrets["PIN_ACESSO"]).strip()
     except Exception:
         pass
-    return os.environ.get("PIN_ACESSO", "tecnicos4321").strip()
+    return os.environ.get("PIN_ACESSO", PIN_ACESSO_PADRAO).strip()
 
 
 def obter_google_api_key() -> str:
+    # 1. Prioridade máxima: chave introduzida diretamente no site nesta sessão
+    chave_sessao = str(st.session_state.get("google_api_key_site", "")).strip()
+    if chave_sessao:
+        return chave_sessao
+
+    # 2. Ficheiro local guardado pelo site (partilhado enquanto o servidor estiver ativo)
+    if FICHEIRO_KEY_LOCAL.exists():
+        try:
+            dados = json.loads(FICHEIRO_KEY_LOCAL.read_text(encoding="utf-8"))
+            if dados.get("google_api_key"):
+                return str(dados["google_api_key"]).strip()
+        except Exception:
+            pass
+
+    # 3. Secrets do Streamlit Cloud ou variáveis de ambiente (fallback opcional)
     for nome_var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
         try:
             if nome_var in st.secrets and str(st.secrets[nome_var]).strip():
@@ -78,19 +95,23 @@ def obter_google_api_key() -> str:
         if val_env:
             return val_env
 
-    if FICHEIRO_KEY_LOCAL.exists():
-        try:
-            dados = json.loads(FICHEIRO_KEY_LOCAL.read_text(encoding="utf-8"))
-            if dados.get("google_api_key"):
-                return str(dados["google_api_key"]).strip()
-        except Exception:
-            pass
     return ""
 
 
 def guardar_google_api_key(chave: str) -> None:
+    limpa = chave.strip()
+    st.session_state["google_api_key_site"] = limpa
     try:
-        FICHEIRO_KEY_LOCAL.write_text(json.dumps({"google_api_key": chave.strip()}), encoding="utf-8")
+        FICHEIRO_KEY_LOCAL.write_text(json.dumps({"google_api_key": limpa}), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def remover_google_api_key() -> None:
+    st.session_state.pop("google_api_key_site", None)
+    try:
+        if FICHEIRO_KEY_LOCAL.exists():
+            FICHEIRO_KEY_LOCAL.unlink()
     except Exception:
         pass
 
@@ -98,8 +119,7 @@ def guardar_google_api_key(chave: str) -> None:
 def criar_token(nome: str) -> str:
     segredo = obter_pin_acesso().encode("utf-8")
     assinatura = hmac.new(segredo, nome.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
-    payload = base64.urlsafe_b64encode(f"{nome}|{assinatura}".encode("utf-8")).decode("ascii")
-    return payload
+    return base64.urlsafe_b64encode(f"{nome}|{assinatura}".encode("utf-8")).decode("ascii")
 
 
 def validar_token(token: str) -> str | None:
@@ -115,7 +135,7 @@ def validar_token(token: str) -> str | None:
     return None
 
 
-# ------------------------------------------------------------------ SESSÃO / LOGIN
+# ------------------------------------------------------------------ SESSÃO / LOGIN PERSISTENTE
 if "utilizador" not in st.session_state:
     token_url = st.query_params.get("t", "")
     st.session_state.utilizador = validar_token(token_url) if token_url else None
@@ -130,13 +150,13 @@ if not st.session_state.utilizador:
             nome_custom = st.text_input("Nome de Utilizador (se escolheu 'Outro técnico...')")
             pin = st.text_input("Chave de Acesso MGC", type="password")
 
-            chave_atual = obter_google_api_key()
-            api_key_in = ""
-            if not chave_atual:
-                api_key_in = st.text_input(
-                    "Google Gemini API Key (primeiro acesso)",
+            chave_existente = obter_google_api_key()
+            api_key_login = ""
+            if not chave_existente:
+                api_key_login = st.text_input(
+                    "Google Gemini API Key (opcional — também pode colocar depois na barra lateral)",
                     type="password",
-                    help="Crie gratuitamente em aistudio.google.com/apikey",
+                    placeholder="Cole aqui a sua chave da Google...",
                 )
 
             if st.form_submit_button("Entrar no Sistema", use_container_width=True):
@@ -146,8 +166,8 @@ if not st.session_state.utilizador:
                 elif pin.strip() != obter_pin_acesso():
                     st.error("Chave de Acesso MGC incorreta.")
                 else:
-                    if api_key_in.strip():
-                        guardar_google_api_key(api_key_in.strip())
+                    if api_key_login.strip():
+                        guardar_google_api_key(api_key_login.strip())
                     st.session_state.utilizador = nome_final
                     st.query_params["t"] = criar_token(nome_final)
                     st.rerun()
@@ -157,14 +177,43 @@ utilizador: str = st.session_state.utilizador
 
 
 # ------------------------------------------------------------------ MOTOR LLM (GOOGLE GEMINI REST + STREAMING)
-@st.cache_data(ttl=120, show_spinner=False)
-def listar_modelos_gemini(api_key: str) -> list[str]:
-    if not api_key:
-        return []
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={urllib.parse.quote(api_key)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AssistenteMGC/1.0"})
+def _abrir_pedido_google(url_sem_key: str, chave: str, payload_bytes: bytes | None = None, timeout: int = 25):
+    """Autentica via ?key= e, caso seja um token OAuth/Cloud (não-AIza), tenta Bearer automaticamente."""
+    sep = "&" if "?" in url_sem_key else "?"
+    url_com_key = f"{url_sem_key}{sep}key={urllib.parse.quote(chave)}"
+    headers_base = {"User-Agent": "AssistenteMGC/1.0"}
+    if payload_bytes is not None:
+        headers_base["Content-Type"] = "application/json"
+
+    req1 = urllib.request.Request(
+        url_com_key,
+        data=payload_bytes,
+        headers=headers_base,
+        method="POST" if payload_bytes is not None else "GET",
+    )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        return urllib.request.urlopen(req1, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        if e.code in (400, 401, 403) and not chave.startswith("AIza"):
+            headers_bearer = dict(headers_base)
+            headers_bearer["Authorization"] = f"Bearer {chave}"
+            req2 = urllib.request.Request(
+                url_sem_key,
+                data=payload_bytes,
+                headers=headers_bearer,
+                method="POST" if payload_bytes is not None else "GET",
+            )
+            return urllib.request.urlopen(req2, timeout=timeout)
+        raise
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def listar_modelos_gemini(api_key: str) -> tuple[list[str], str]:
+    if not api_key:
+        return [], "Sem chave API configurada."
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+    try:
+        with _abrir_pedido_google(url, api_key, timeout=10) as resp:
             dados = json.loads(resp.read().decode("utf-8"))
         validos = []
         bloqueados = ("embedding", "aqa", "imagen", "veo", "tts", "robotics", "computer-use")
@@ -191,18 +240,22 @@ def listar_modelos_gemini(api_key: str) -> list[str]:
             return 5
 
         validos.sort(key=_prioridade)
-        return validos
-    except Exception:
-        return []
+        if not validos:
+            return [], "Nenhum modelo Gemini disponível nesta conta."
+        return validos, ""
+    except urllib.error.HTTPError as e:
+        return [], f"Erro HTTP {e.code} na chave Google (verifique se a chave é válida em aistudio.google.com/apikey)."
+    except Exception as e:
+        return [], f"Erro de ligação: {e}"
 
 
 def estado_llm() -> tuple[bool, str]:
     chave = obter_google_api_key()
     if not chave:
-        return False, "Falta configurar GEMINI_API_KEY nos Secrets ou na barra lateral."
-    modelos = listar_modelos_gemini(chave)
+        return False, "Insira a Google API Key abaixo para ativar a IA."
+    modelos, erro = listar_modelos_gemini(chave)
     if not modelos:
-        return False, "Chave Google inválida ou sem acesso à rede."
+        return False, erro or "Chave Google inválida ou sem ligação."
     return True, f"Google Gemini ativo ({modelos[0]})"
 
 
@@ -228,15 +281,17 @@ def _converter_mensagens_gemini(msgs: list[dict]) -> tuple[str, list[dict]]:
 def gerar_stream_gemini(msgs: list[dict], temperatura: float = 0.2):
     chave = obter_google_api_key()
     if not chave:
-        raise RuntimeError("GEMINI_API_KEY não configurada.")
-    modelos = listar_modelos_gemini(chave) or ["gemini-2.5-flash", "gemini-2.0-flash"]
+        raise RuntimeError("Insira a sua Google Gemini API Key na barra lateral.")
+    modelos, _ = listar_modelos_gemini(chave)
+    if not modelos:
+        modelos = ["gemini-2.5-flash", "gemini-2.0-flash"]
     system_instruction, contents = _converter_mensagens_gemini(msgs)
 
     payload_dict: dict = {
         "contents": contents,
         "generationConfig": {
             "temperature": temperatura,
-            "maxOutputTokens": 900,
+            "maxOutputTokens": 950,
         },
     }
     if system_instruction:
@@ -246,19 +301,10 @@ def gerar_stream_gemini(msgs: list[dict], temperatura: float = 0.2):
     ultimo_erro = "Sem resposta dos modelos."
 
     for modelo in modelos[:4]:
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}"
-            f":streamGenerateContent?alt=sse&key={urllib.parse.quote(chave)}"
-        )
-        req = urllib.request.Request(
-            url,
-            data=payload_bytes,
-            headers={"Content-Type": "application/json", "User-Agent": "AssistenteMGC/1.0"},
-            method="POST",
-        )
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:streamGenerateContent?alt=sse"
         try:
             emitiu = False
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with _abrir_pedido_google(url, chave, payload_bytes=payload_bytes, timeout=30) as resp:
                 for raw_line in resp:
                     linha = raw_line.decode("utf-8", errors="ignore").strip()
                     if not linha.startswith("data:"):
@@ -382,13 +428,11 @@ class IndiceManual:
 
         scores_extra = {c.meta["pagina"]: 0.0 for c in self.chunks}
 
-        # 1. Citação explícita de página ("página 21" / "p. 21")
         for m in re.finditer(r"p[áa]g(?:ina)?\.?\s*(\d+)", consulta, re.IGNORECASE):
             p_cit = int(m.group(1))
             if p_cit in scores_extra:
                 scores_extra[p_cit] += 50.0
 
-        # 2. Códigos numéricos, negativos e alfanuméricos exatos (-999, PT100, 14CT10, 54W6)
         codigos = re.findall(r"(?:\-\d+|[A-Za-z]{1,4}\d+[A-Za-z0-9\-\./]*|\d+[A-Za-z]+\d*)", consulta)
         for c in self.chunks:
             txt_low = c.texto.lower()
@@ -396,7 +440,6 @@ class IndiceManual:
                 if len(cod) >= 2 and cod.lower() in txt_low:
                     scores_extra[c.meta["pagina"]] += 25.0
 
-        # 3. Pontuação BM25
         q_tokens = re.sub(r"[^\w\s\-/\.]", " ", consulta.lower()).split()
         bm25_scores = self.bm25.get_scores(q_tokens) if q_tokens else np.zeros(len(self.chunks))
 
@@ -628,8 +671,7 @@ class BaseCasos:
         self.bm25 = BM25Okapi(corpus) if corpus else None
 
     def equipamentos(self) -> list[str]:
-        eqs = sorted({c.equipamento.strip() for c in self.casos if c.equipamento and c.equipamento.strip()})
-        return eqs
+        return sorted({c.equipamento.strip() for c in self.casos if c.equipamento and c.equipamento.strip()})
 
     def procurar(self, consulta: str, equipamento: str | None = None, k: int = 4) -> list[tuple[CasoHistorico, float]]:
         if not self.casos or not self.bm25:
@@ -650,9 +692,7 @@ class BaseCasos:
 def carregar_casos_manwinwin() -> tuple[list[CasoHistorico], list[str]]:
     casos: list[CasoHistorico] = []
     avisos: list[str] = []
-    ficheiros = sorted(PASTA_MANWINWIN.glob("*"))
-
-    for f in ficheiros:
+    for f in sorted(PASTA_MANWINWIN.glob("*")):
         ext = f.suffix.lower()
         linhas: list[dict] = []
         try:
@@ -661,8 +701,7 @@ def carregar_casos_manwinwin() -> tuple[list[CasoHistorico], list[str]]:
                     try:
                         txt = f.read_text(encoding=enc)
                         delim = ";" if txt.count(";") > txt.count(",") else ","
-                        reader = csv.DictReader(io.StringIO(txt), delimiter=delim)
-                        linhas = list(reader)
+                        linhas = list(csv.DictReader(io.StringIO(txt), delimiter=delim))
                         break
                     except Exception:
                         continue
@@ -923,14 +962,43 @@ def _pagina_renderizada(caminho: str, hash_manual: str, pagina: int, zoom: float
     return dados, mime, blocos
 
 
-@st.cache_data(ttl=30, show_spinner=False)
-def _estado_llm(_chave: int):
-    return estado_llm()
-
-
 # ------------------------------------------------------------------ BARRA LATERAL
 with st.sidebar:
     st.markdown(f"### 👤 {utilizador}")
+
+    # --- Gestão direta da Chave API Google no site
+    ok_llm, msg_llm = estado_llm()
+    if ok_llm:
+        st.success("🧠 " + msg_llm)
+        with st.expander("🔑 Alterar / Remover Chave API Google"):
+            nova_chave = st.text_input("Nova Google API Key", type="password", key="sb_gkey_ok")
+            c_save, c_del = st.columns(2)
+            if c_save.button("Guardar", use_container_width=True, key="btn_save_ok") and nova_chave.strip():
+                guardar_google_api_key(nova_chave.strip())
+                listar_modelos_gemini.clear()
+                st.rerun()
+            if c_del.button("Remover", use_container_width=True, key="btn_del_ok"):
+                remover_google_api_key()
+                listar_modelos_gemini.clear()
+                st.rerun()
+    else:
+        st.error("🧠 " + msg_llm)
+        with st.form("form_api_key_site"):
+            chave_site = st.text_input(
+                "🔑 Google Gemini API Key",
+                type="password",
+                placeholder="Cole aqui a chave (AIza...)",
+                help="Obtenha em aistudio.google.com/apikey",
+            )
+            if st.form_submit_button("💾 Ativar Chave API", use_container_width=True):
+                if chave_site.strip():
+                    guardar_google_api_key(chave_site.strip())
+                    listar_modelos_gemini.clear()
+                    st.rerun()
+                else:
+                    st.warning("Cole uma chave válida antes de ativar.")
+
+    st.divider()
     manuais = listar_manuais()
 
     with st.expander("➕ Adicionar manual (PDF)"):
@@ -970,15 +1038,6 @@ with st.sidebar:
     st.caption(f"Histórico: {n_mw} avarias ManWinWin · {len(base.casos) - n_mw} casos validados")
     for a in avisos_mw:
         st.warning(a)
-
-    ok_llm, msg_llm = _estado_llm(0)
-    (st.success if ok_llm else st.error)("🧠 " + msg_llm)
-    if not ok_llm:
-        nova_chave = st.text_input("Inserir Google Gemini API Key", type="password", key="sb_gkey")
-        if nova_chave.strip() and st.button("Guardar Chave Google", use_container_width=True):
-            guardar_google_api_key(nova_chave.strip())
-            st.cache_data.clear()
-            st.rerun()
 
     st.divider()
     st.markdown("**Visualização**")
