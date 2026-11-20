@@ -1,6 +1,6 @@
 streamlit
-PyMuPDF
-groq
-numpy
-pillow
+pymupdf
 rank-bm25
+numpy
+pandas
+openpyxl
