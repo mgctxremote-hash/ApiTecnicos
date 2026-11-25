@@ -1,4 +1,6 @@
-streamlit>=1.40
-pymupdf>=1.24
-pandas>=2.0
-openpyxl>=3.1
+streamlit
+pymupdf
+rank-bm25
+numpy
+pandas
+openpyxl
