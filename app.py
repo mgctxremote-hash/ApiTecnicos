@@ -69,7 +69,7 @@ def obter(nome: str, defeito: str = "") -> str:
 # --- Acesso ---------------------------------------------------------------
 def pin_acesso() -> str:
     """PIN partilhado. Obrigatório: não existe valor por defeito."""
-    pin = obter("B1r2u3")
+    pin = obter("PIN_ACESSO")
     if not pin:
         raise RuntimeError(
             "PIN_ACESSO não definido. Crie .streamlit/secrets.toml com PIN_ACESSO = \"...\" "
