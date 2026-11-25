@@ -72,7 +72,7 @@ def pin_acesso() -> str:
     pin = obter("PIN_ACESSO")
     if not pin:
         raise RuntimeError(
-            "PIN_ACESSO não definido. Crie .streamlit/secrets.toml com PIN_ACESSO = \"...\" "
+            "PIN_ACESSO não definido. Crie .streamlit/secrets.toml com PIN_ACESSO = \"tecnicos4321\" "
             "(ver secrets.toml.exemplo)."
         )
     return pin
@@ -86,7 +86,7 @@ LISTA_TECNICOS = [n.strip() for n in obter("TECNICOS", "").split(",") if n.strip
 LLM_PROVIDER = obter("LLM_PROVIDER", "ollama").lower()
 OLLAMA_URL = obter("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = obter("OLLAMA_MODEL", "qwen2.5:7b-instruct")
-GEMINI_API_KEY = obter("GEMINI_API_KEY")
+GEMINI_API_KEY = obter("")
 GEMINI_MODEL = obter("GEMINI_MODEL", "gemini-2.5-flash")
 LLM_TIMEOUT_S = int(obter("LLM_TIMEOUT_S", "180"))
 LLM_MAX_TOKENS = int(obter("LLM_MAX_TOKENS", "1400"))
