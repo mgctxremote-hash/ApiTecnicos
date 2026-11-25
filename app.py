@@ -1252,7 +1252,7 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ Limpar conversa", use_container_width=True):
         history.apagar(utilizador, nome_manual)
-        st.session_state.pop("mensagens", None)
+        st.session_state.mensagens = []
         st.rerun()
     if st.button("🚪 Terminar sessão", use_container_width=True):
         st.session_state.clear()
@@ -1268,7 +1268,7 @@ with st.sidebar:
                            use_container_width=True)
 
 # ------------------------------------------------------------------ estado da conversa
-if st.session_state.get("_manual_atual") != (utilizador, nome_manual):
+if "mensagens" not in st.session_state or st.session_state.get("_manual_atual") != (utilizador, nome_manual):
     st.session_state._manual_atual = (utilizador, nome_manual)
     st.session_state.mensagens = history.carregar(utilizador, nome_manual)
     st.session_state.pagina = 1
