@@ -88,6 +88,8 @@ OLLAMA_URL = obter("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = obter("OLLAMA_MODEL", "qwen2.5:7b-instruct")
 GEMINI_API_KEY = obter("GEMINI_API_KEY")
 GEMINI_MODEL = obter("GEMINI_MODEL", "gemini-3.8-flash")
+# modelos de reserva, usados por ordem se o principal estiver sobrecarregado (erro 503/429)
+GEMINI_FALLBACKS = [m.strip() for m in obter("GEMINI_FALLBACKS", "gemini-3.6-flash,gemini-3.5-flash-lite,gemini-2.5-flash").split(",") if m.strip()]
 LLM_TIMEOUT_S = int(obter("LLM_TIMEOUT_S", "180"))
 LLM_MAX_TOKENS = int(obter("LLM_MAX_TOKENS", "1400"))
 
@@ -566,6 +568,7 @@ _FONTES['llm'] = r'''
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from typing import Iterator
@@ -629,7 +632,11 @@ def _ollama(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: f
                 break
 
 
+_TRANSITORIOS = ("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "Não consegui contactar")
+
+
 def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: float) -> Iterator[str]:
+    """Gemini com novas tentativas (1s, 2s) e modelos de reserva quando há sobrecarga (503/429)."""
     if not config.GEMINI_API_KEY:
         raise LLMErro("GEMINI_API_KEY não definida.")
     sistema = "\n\n".join(m["content"] for m in mensagens if m["role"] == "system")
@@ -639,18 +646,39 @@ def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: f
     ]
     corpo = {
         "contents": conteudo,
-        "generationConfig": {"temperature": temperatura, "maxOutputTokens": max(max_tokens, 4096)},  # folga: o "pensar" do modelo conta aqui
+        "generationConfig": {"temperature": temperatura, "maxOutputTokens": max(max_tokens, 4096)},
     }
     if sistema:
         corpo["systemInstruction"] = {"parts": [{"text": sistema}]}
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent"
-    with _post(url, corpo, {"x-goog-api-key": config.GEMINI_API_KEY}) as resp:
-        d = json.loads(resp.read())
-    try:
-        partes = d["candidates"][0]["content"]["parts"]
-        yield "".join(p.get("text", "") for p in partes)
-    except (KeyError, IndexError) as e:
-        raise LLMErro(f"Resposta inesperada do Gemini: {str(d)[:200]}") from e
+
+    modelos = [config.GEMINI_MODEL] + [m for m in config.GEMINI_FALLBACKS if m != config.GEMINI_MODEL]
+    ultimo: Exception | None = None
+    for modelo in modelos:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
+        for tentativa in range(3):
+            try:
+                with _post(url, corpo, {"x-goog-api-key": config.GEMINI_API_KEY}) as resp:
+                    d = json.loads(resp.read())
+                texto = "".join(p.get("text", "") for p in d["candidates"][0]["content"]["parts"])
+                if texto.strip():
+                    yield texto
+                    return
+                ultimo = LLMErro(f"{modelo}: resposta vazia")
+                break                                   # tenta o modelo seguinte
+            except (KeyError, IndexError, TypeError):
+                ultimo = LLMErro(f"{modelo}: resposta inesperada")
+                break
+            except LLMErro as e:
+                ultimo = e
+                msg = str(e)
+                if any(t in msg for t in _TRANSITORIOS):
+                    if tentativa < 2:
+                        time.sleep(1 + tentativa)       # 1s, depois 2s
+                    continue
+                if "HTTP 404" in msg:                   # modelo inexistente: tenta o seguinte
+                    break
+                raise                                   # chave inválida (400/401/403), etc.
+    raise LLMErro(f"Gemini indisponível (tentei {', '.join(modelos)}). Último erro: {str(ultimo)[:200]}")
 
 
 def gerar_stream(mensagens: list[dict], max_tokens: int | None = None, temperatura: float = 0.1) -> Iterator[str]:
@@ -1396,14 +1424,16 @@ with col_chat:
                 resposta, erro = "", str(e)
 
             if erro or not resposta.strip():
-                resposta = ("⚠️ O modelo de IA não respondeu (" + (erro or "resposta vazia") + "). "
-                            "Mostro-lhe apenas o que encontrei no manual e nos casos resolvidos — consulte as páginas e os casos abaixo.")
+                excertos = "\n\n".join(
+                    f"**[Manual p.{c.meta['pagina']}]** {c.texto[:400]}…" for c, _ in trechos[:3]) or "(nada encontrado no manual)"
+                resposta = ("⚠️ A IA está temporariamente indisponível (" + (erro or "resposta vazia")[:160] + "). "
+                            "Tente de novo daqui a alguns segundos. Entretanto, isto é o que encontrei no manual:\n\n" + excertos)
                 st.markdown(resposta)
 
             citadas = diagnosis.paginas_citadas(resposta, manual.n_paginas)
             paginas = citadas or paginas_busca[:3]
-            fb_id = feedback.registar_resposta(utilizador, manual.nome, equipamento, pergunta, resposta,
-                                               paginas, [c["id"] for c in casos_resumo])
+            fb_id = None if erro or not resposta.strip() or resposta.startswith("⚠️") else feedback.registar_resposta(
+                utilizador, manual.nome, equipamento, pergunta, resposta, paginas, [c["id"] for c in casos_resumo])
             mensagens.append({
                 "role": "assistant", "content": resposta, "paginas": paginas, "casos": casos_resumo,
                 "fb_id": fb_id, "aviso": diagnosis.precisa_aviso_seguranca(resposta),
