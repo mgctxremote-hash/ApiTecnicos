@@ -137,7 +137,7 @@ def validar_token(token: str) -> str | None:
 
 # ------------------------------------------------------------------ SESSÃO / LOGIN PERSISTENTE
 if "utilizador" not in st.session_state:
-    token_url = st.query_params.get("t", "")
+    token_url = str(st.query_params.get("t", ""))
     st.session_state.utilizador = validar_token(token_url) if token_url else None
 
 if not st.session_state.utilizador:
