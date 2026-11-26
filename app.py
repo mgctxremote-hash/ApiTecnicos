@@ -88,6 +88,8 @@ OLLAMA_URL = obter("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = obter("OLLAMA_MODEL", "qwen2.5:7b-instruct")
 GEMINI_API_KEY = obter("GEMINI_API_KEY")
 GEMINI_MODEL = obter("GEMINI_MODEL", "gemini-3.8-flash")
+# modo "Rápido" da app: modelo mais leve (responde mais depressa; compare a exatidão no modo Qualidade)
+GEMINI_MODEL_RAPIDO = obter("GEMINI_MODEL_RAPIDO", "gemini-3.5-flash-lite")
 # modelos de reserva, usados por ordem se o principal estiver sobrecarregado (erro 503/429)
 GEMINI_FALLBACKS = [m.strip() for m in obter("GEMINI_FALLBACKS", "gemini-3.6-flash,gemini-3.5-flash-lite,gemini-2.5-flash").split(",") if m.strip()]
 # esforço de "pensar" do Gemini: minimal/low/medium/high ("" = não enviar). low = bem mais rápido.
@@ -192,6 +194,58 @@ GLOSSARIO = {
     "profibus": ["profibus"],
     "reset": ["reset", "ruecksetzen"],
 }
+
+
+GLOSSARIO.update({
+    "malha": ["shield", "schirm", "knit", "masche"],
+    "contador": ["counter", "zaehler"],
+    "contagem": ["count", "counter", "zaehlung"],
+    "vapor": ["steam", "dampf"],
+    "caldeira": ["boiler", "kessel"],
+    "queimador": ["burner", "brenner"],
+    "zerado": ["zero", "null"],
+    "zero": ["zero", "null"],
+    "nivel": ["level", "niveau", "fuellstand"],
+    "valvula": ["valve", "ventil"],
+    "caudal": ["flow", "durchfluss"],
+    "leitura": ["reading", "value", "wert"],
+    "sinal": ["signal", "signal"],
+    "interruptor": ["switch", "schalter"],
+    "botao": ["button", "pushbutton", "taster"],
+    "aquecimento": ["heating", "heater", "heizung"],
+    "resistencia": ["resistor", "heater", "widerstand"],
+    "fuso": ["spindle", "spindel"],
+    "cilindro": ["cylinder", "zylinder"],
+    "parado": ["stopped", "stop", "stillstand"],
+    "tampa": ["cover", "door", "abdeckung"],
+    "porta": ["door", "port", "tuer"],
+    "rede": ["network", "netzwerk"],
+    "ligacao": ["connection", "wiring", "verbindung"],
+    "cablagem": ["wiring", "verdrahtung"],
+    "terra": ["earth", "ground", "erde"],
+    "contactos": ["contacts", "kontakte"],
+    "bobina": ["coil", "spule"],
+    "pressostato": ["pressure switch", "druckschalter"],
+    "termostato": ["thermostat", "thermostat"],
+})
+
+
+def palavras_chave(texto: str, max_n: int = 8) -> tuple[list[str], list[str]]:
+    """(palavras da pergunta, termos equivalentes do glossário) para mostrar ao técnico o que se procurou."""
+    vistos, base = set(), []
+    for w in re.findall(r"[\wÀ-ÿ\-\.]+", texto.lower()):
+        w = w.strip(".-_")
+        k = sem_acentos(w)
+        if not w or k in _STOP or k in vistos or (len(k) < 3 and not any(c.isdigit() for c in k)):
+            continue
+        vistos.add(k)
+        base.append(w)
+    extra: list[str] = []
+    for w in base:
+        for e in GLOSSARIO.get(sem_acentos(w), [])[:2]:
+            if e not in extra and e not in base:
+                extra.append(e)
+    return base[:max_n], extra[:max_n]
 
 
 def expandir_com_glossario(texto: str, limite: int = 12) -> list[str]:
@@ -415,6 +469,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -488,10 +543,18 @@ def _partes_gemini(m: dict) -> list[dict]:
     return partes
 
 
+_LOCAL = threading.local()   # info da última chamada (modelo usado, falhas) para mostrar na app
+
+
+def ultimo_info() -> dict | None:
+    return getattr(_LOCAL, "info", None)
+
+
 _TRANSITORIOS = ("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "Não consegui contactar")
 
 
-def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: float) -> Iterator[str]:
+def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: float,
+            modelo_pedido: str | None = None) -> Iterator[str]:
     """Gemini em streaming (o texto aparece à medida que é gerado), com novas tentativas (1s, 2s),
     modelos de reserva em caso de sobrecarga (503/429) e 'pensar' reduzido para responder mais depressa."""
     if not config.GEMINI_API_KEY:
@@ -508,8 +571,11 @@ def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: f
     if sistema:
         corpo["systemInstruction"] = {"parts": [{"text": sistema}]}
 
-    modelos = [config.GEMINI_MODEL] + [m for m in config.GEMINI_FALLBACKS if m != config.GEMINI_MODEL]
+    # o modelo pedido primeiro; se estiver sobrecarregado, o principal e depois as reservas
+    modelos = list(dict.fromkeys([modelo_pedido or config.GEMINI_MODEL, config.GEMINI_MODEL] + list(config.GEMINI_FALLBACKS)))
     ultimo: Exception | None = None
+    falhas = 0
+    _LOCAL.info = None
     for modelo in modelos:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:streamGenerateContent?alt=sse"
         for tentativa in range(3):
@@ -526,6 +592,8 @@ def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: f
                         for parte in json.loads(dados).get("candidates", [{}])[0].get("content", {}).get("parts", []):
                             t = parte.get("text", "")
                             if t and not parte.get("thought"):
+                                if not emitido:
+                                    _LOCAL.info = {"modelo": modelo, "falhas": falhas}
                                 emitido = True
                                 yield t
                 if emitido:
@@ -541,6 +609,7 @@ def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: f
                 if emitido:
                     raise LLMErro(f"Resposta interrompida a meio ({str(e)[:120]}). Tente de novo.")
                 ultimo = e
+                falhas += 1
                 msg = str(e)
                 if "HTTP 400" in msg and "thinking" in msg.lower() and "thinkingConfig" in corpo["generationConfig"]:
                     del corpo["generationConfig"]["thinkingConfig"]   # este modelo não aceita: repete sem isso
@@ -555,17 +624,19 @@ def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: f
     raise LLMErro(f"Gemini indisponível (tentei {', '.join(modelos)}). Último erro: {str(ultimo)[:200]}")
 
 
-def gerar_stream(mensagens: list[dict], max_tokens: int | None = None, temperatura: float = 0.1) -> Iterator[str]:
+def gerar_stream(mensagens: list[dict], max_tokens: int | None = None, temperatura: float = 0.1,
+                 modelo: str | None = None) -> Iterator[str]:
     mt = max_tokens or config.LLM_MAX_TOKENS
     if config.LLM_PROVIDER == "ollama":
         return _ollama(mensagens, True, mt, temperatura)
     if config.LLM_PROVIDER == "gemini":
-        return _gemini(mensagens, False, mt, temperatura)
+        return _gemini(mensagens, False, mt, temperatura, modelo)
     raise LLMErro(f"LLM_PROVIDER desconhecido: {config.LLM_PROVIDER}")
 
 
-def gerar(mensagens: list[dict], max_tokens: int | None = None, temperatura: float = 0.1) -> str:
-    return "".join(gerar_stream(mensagens, max_tokens, temperatura)).strip()
+def gerar(mensagens: list[dict], max_tokens: int | None = None, temperatura: float = 0.1,
+          modelo: str | None = None) -> str:
+    return "".join(gerar_stream(mensagens, max_tokens, temperatura, modelo)).strip()
 '''
 
 # ----------------------- core/embeddings.py -----------------------
@@ -1420,7 +1491,8 @@ FORMATO (curto, sem enrolar)
 **Leitura do problema:** 1–2 frases.
 **Hipóteses (da mais para a menos provável):** lista numerada, cada uma com o porquê e a fonte.
 **Próximo passo sugerido:** UM só passo, em forma de pergunta/recomendação, de preferência o mais simples e seguro primeiro (inspeção visual, ligações, fusíveis) antes de medições.
-**Fontes consultadas:** lista curta."""
+**Fontes consultadas:** lista curta.
+Máximo 180 palavras no total."""
 
 AVISO_SEGURANCA = (
     "⚠️ **Segurança:** medições em quadros energizados só por pessoal habilitado e seguindo o procedimento da empresa "
@@ -1521,6 +1593,36 @@ def preparar(pergunta, historico, manual, indice, base, equipamento, semantica=T
     msgs = montar_mensagens(pergunta, historico, trechos, casos, manual.nome, equipamento, manual.idioma,
                             imagens=imagens or None, paginas_imagem=paginas_img)
     return msgs, trechos, casos
+
+
+def escolher_paginas_imagem(foco: int, trechos, textos: list[str], modo: str = "Auto",
+                            maximo: int = 2, limite_palavras: int = 150) -> list[int]:
+    """Páginas cuja IMAGEM vai para a IA.
+    Auto: a melhor página encontrada pela pesquisa + páginas com pouco texto (esquemas) até ao máximo.
+    Sempre: as melhores páginas encontradas (e a página em foco se sobrar lugar). Nunca: nenhuma."""
+    if modo == "Nunca":
+        return []
+    encontradas: list[int] = []
+    for ch, _ in trechos:
+        if ch.meta["pagina"] not in encontradas:
+            encontradas.append(ch.meta["pagina"])
+    escolhidas: list[int] = []
+
+    def juntar(p):
+        if 1 <= p <= len(textos) and p not in escolhidas and len(escolhidas) < maximo:
+            escolhidas.append(p)
+
+    if modo == "Sempre":
+        for p in encontradas:
+            juntar(p)
+        juntar(foco)
+        return escolhidas
+    if encontradas:
+        juntar(encontradas[0])                      # a página que a pesquisa considera melhor
+    for p in [foco] + encontradas[1:]:
+        if 1 <= p <= len(textos) and len(textos[p - 1].split()) < limite_palavras:
+            juntar(p)
+    return escolhidas
 
 
 def paginas_citadas(resposta: str, n_paginas: int) -> list[int]:
@@ -1657,13 +1759,14 @@ for _n in _ORDEM:
     exec(compile(_FONTES[_n], "core/" + _n + ".py", "exec"), _m.__dict__)
 
 # ======================= APLICACAO =======================
+import time
 from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
 
 from core import (auth, avaliacao, casos as mod_casos, config, diagnosis, embeddings, feedback, history,
-                  importar, llm, pdf_store, translate, viewer)
+                  importar, llm, pdf_store, textutil, translate, viewer)
 
 st.set_page_config(page_title="Assistente MGC", page_icon="⚡", layout="wide")
 
@@ -1790,10 +1893,10 @@ with st.sidebar:
     tem_gemini = config.LLM_PROVIDER == "gemini" and bool(config.GEMINI_API_KEY)
     st.divider()
     st.markdown("**Inteligência**")
-    usar_semantica = st.checkbox("🔎 Pesquisa por significado (mais precisa)", value=tem_gemini,
+    usar_semantica = st.checkbox("🔎 Pesquisa por significado (mais precisa)", value=tem_gemini and not manual.idioma.startswith("pt"),
                                  disabled=not tem_gemini,
                                  help="Junta à pesquisa por palavras uma pesquisa por significado (embeddings do Gemini). "
-                                      "Encontra o texto certo mesmo que o manual esteja noutro idioma.")
+                                      "Útil quando o manual está noutro idioma. Por defeito só liga se o manual não estiver em português.")
     chave_falha = f"emb_falhou_{manual.hash}"
     if usar_semantica and indice.matriz is None and not st.session_state.get(chave_falha):
         barra = st.progress(0.0, text="A preparar a pesquisa por significado (só na 1.ª vez)...")
@@ -1810,8 +1913,12 @@ with st.sidebar:
             st.rerun()
     modo_img = st.radio("👁️ A IA vê a página (imagem)", ["Auto", "Sempre", "Nunca"], horizontal=True,
                         disabled=not tem_gemini,
-                        help="Auto: envia a imagem das páginas com pouco texto (esquemas). Sempre: também a página em foco. "
-                             "Só com Gemini.") if tem_gemini else "Nunca"
+                        help="Auto: a IA lê a imagem da melhor página encontrada (e de páginas só com esquema). "
+                             "Sempre: lê as 2 melhores páginas. Nunca: só texto (mais rápido).") if tem_gemini else "Nunca"
+    velocidade = st.radio("⚡ Velocidade da IA", ["Rápido", "Preciso"], horizontal=True,
+                          help="Rápido: modelo mais leve. Preciso: modelo maior, mais lento. "
+                               "Compare os dois no modo Qualidade.") if tem_gemini else "Preciso"
+    modelo_sel = config.GEMINI_MODEL_RAPIDO if (tem_gemini and velocidade == "Rápido") else None
     reescrever = st.checkbox("Usar IA para entender perguntas curtas (mais lento)", value=False)
 
     st.divider()
@@ -1945,7 +2052,8 @@ def pagina_qualidade():
     st.markdown("#### 2) Teste com a IA (usa a API: 1 pedido por caso)")
     if st.button(f"▶️ Testar com a IA ({len(testes)} pedidos)", use_container_width=True, disabled=not ok_llm):
         barra = st.progress(0.0, text="A testar...")
-        r = avaliacao.avaliar_com_ia(testes, manual, indice, base, usar_semantica, llm.gerar,
+        r = avaliacao.avaliar_com_ia(testes, manual, indice, base, usar_semantica,
+                                     lambda msgs: llm.gerar(msgs, modelo=modelo_sel),
                                      progresso=lambda a, b: barra.progress(a / b, text=f"{a}/{b}"))
         barra.empty()
         avaliacao.registar_execucao(nome_manual, "IA", r)
@@ -2025,9 +2133,13 @@ with col_chat:
 
     for i, msg in enumerate(mensagens):
         with st.chat_message(msg["role"]):
+            if msg["role"] == "assistant" and msg.get("busca"):
+                st.caption(msg["busca"])
             st.markdown(msg["content"])
             if msg["role"] != "assistant":
                 continue
+            if msg.get("info"):
+                st.caption(msg["info"])
             if msg.get("aviso"):
                 st.warning(diagnosis.AVISO_SEGURANCA)
             if msg.get("paginas_img"):
@@ -2080,22 +2192,10 @@ with col_chat:
         estado_img = {"paginas": []}
 
         def escolher_imagens(trechos):
-            """Páginas com pouco texto (esquemas) entre a página em foco e as encontradas; máx. 2 imagens."""
-            if modo_img == "Nunca":
-                return [], []
-            foco = int(st.session_state.pagina)
-            ordem = [foco] + [ch.meta["pagina"] for ch, _ in trechos]
-            vistos, escolhidas = set(), []
-            for p in ordem:
-                if p in vistos:
-                    continue
-                vistos.add(p)
-                if (p == foco and modo_img == "Sempre") or _pouco_texto(p):
-                    escolhidas.append(p)
-                if len(escolhidas) >= 2:
-                    break
+            """A IA lê a imagem da melhor página encontrada (e de páginas só com esquema); máx. 2."""
+            paginas = diagnosis.escolher_paginas_imagem(int(st.session_state.pagina), trechos, manual.textos, modo_img)
             imgs, ok_pags = [], []
-            for p in escolhidas:
+            for p in paginas:
                 try:
                     imgs.append(("image/png", _imagem_para_ia(str(manual.caminho), p)))
                     ok_pags.append(p)
@@ -2105,19 +2205,35 @@ with col_chat:
             return imgs, ok_pags
 
         with st.chat_message("assistant"):
-            with st.spinner("A consultar o manual e os casos resolvidos..."):
+            t0 = time.time()
+            with st.spinner("A ver as palavras da pergunta e a procurar no manual..."):
                 msgs, trechos, casos = diagnosis.preparar(
                     pergunta, hist_antes, manual, indice, base, equipamento, semantica=usar_semantica,
                     usar_llm_reescrita=reescrever and ok_llm, escolher_imagens=escolher_imagens)
+            t_busca = time.time() - t0
             paginas_busca = []
             for ch, _ in trechos:
                 if ch.meta["pagina"] not in paginas_busca:
                     paginas_busca.append(ch.meta["pagina"])
+            palavras, extra = textutil.palavras_chave(pergunta)
+            busca_txt = ("🔎 Procurei: " + " · ".join(palavras)
+                         + (f"  (+ {', '.join(extra)})" if extra else "")
+                         + (" → encontrei nas páginas " + ", ".join(f"p.{p}" for p in paginas_busca[:4])
+                            if paginas_busca else " → nada encontrado no manual"))
+            st.caption(busca_txt)
             casos_resumo = [{"id": c.id, "data": c.data,
                              "equipamento": c.equipamento, "avaria": c.avaria, "causa": c.causa,
                              "solucao": c.solucao} for c, _ in casos]
+            t_llm = time.time()
+            marcas = {}
+
+            def _fluxo():
+                for parte in llm.gerar_stream(msgs, modelo=modelo_sel):
+                    marcas.setdefault("primeira", time.time() - t_llm)
+                    yield parte
+
             try:
-                resposta = st.write_stream(llm.gerar_stream(msgs))
+                resposta = st.write_stream(_fluxo())
                 erro = None
             except llm.LLMErro as e:
                 resposta, erro = "", str(e)
@@ -2129,6 +2245,14 @@ with col_chat:
                             "Tente de novo daqui a alguns segundos. Entretanto, isto é o que encontrei no manual:\n\n" + excertos)
                 st.markdown(resposta)
 
+            t_total = t_busca + (time.time() - t_llm)
+            info = f"⏱ pesquisa {t_busca:.1f}s · 1.ª palavra {marcas.get('primeira', 0) + t_busca:.1f}s · total {t_total:.1f}s"
+            info_llm = llm.ultimo_info() or {}
+            if info_llm.get("modelo"):
+                info += f" · {info_llm['modelo']}" + (f" (depois de {info_llm['falhas']} falhas)" if info_llm.get("falhas") else "")
+            if estado_img["paginas"]:
+                info += f" · {len(estado_img['paginas'])} imagem(ns)"
+            st.caption(info)
             citadas = diagnosis.paginas_citadas(resposta, manual.n_paginas)
             paginas = citadas or paginas_busca[:3]
             falhou = bool(erro) or resposta.startswith("⚠️")
@@ -2137,7 +2261,7 @@ with col_chat:
             mensagens.append({
                 "role": "assistant", "content": resposta, "paginas": paginas, "casos": casos_resumo,
                 "fb_id": fb_id, "aviso": diagnosis.precisa_aviso_seguranca(resposta),
-                "paginas_img": estado_img["paginas"],
+                "paginas_img": estado_img["paginas"], "busca": busca_txt, "info": info,
             })
             if paginas:   # aplicado no início da próxima execução (o widget já foi criado nesta)
                 st.session_state.pagina_pendente = paginas[0]
