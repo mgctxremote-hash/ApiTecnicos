@@ -90,8 +90,15 @@ GEMINI_API_KEY = obter("GEMINI_API_KEY")
 GEMINI_MODEL = obter("GEMINI_MODEL", "gemini-3.8-flash")
 # modelos de reserva, usados por ordem se o principal estiver sobrecarregado (erro 503/429)
 GEMINI_FALLBACKS = [m.strip() for m in obter("GEMINI_FALLBACKS", "gemini-3.6-flash,gemini-3.5-flash-lite,gemini-2.5-flash").split(",") if m.strip()]
+# esforço de "pensar" do Gemini: minimal/low/medium/high ("" = não enviar). low = bem mais rápido.
+GEMINI_THINKING = obter("GEMINI_THINKING", "low").lower()
 LLM_TIMEOUT_S = int(obter("LLM_TIMEOUT_S", "180"))
 LLM_MAX_TOKENS = int(obter("LLM_MAX_TOKENS", "1400"))
+
+# --- Embeddings (pesquisa por significado, só com Gemini) ---------------------
+EMBED_MODEL = obter("EMBED_MODEL", "gemini-embedding-001")
+EMBED_DIM = int(obter("EMBED_DIM", "768"))
+EMBED_LOTE = int(obter("EMBED_LOTE", "50"))
 
 # --- Pesquisa -------------------------------------------------------------
 CHUNK_PALAVRAS = int(obter("CHUNK_PALAVRAS", "220"))
@@ -397,9 +404,332 @@ def reescrever_consulta_simples(historico: list[dict], pergunta: str, n: int = 3
     return " ".join(anteriores + [pergunta])
 '''
 
+# ----------------------- core/llm.py -----------------------
+_FONTES['llm'] = r'''
+"""Cliente LLM sem dependências externas (só urllib).
+
+- ollama: modelo local (defeito). Sem chave, sem internet, dados ficam na empresa.
+- gemini: API opcional. ATENÇÃO à privacidade: ver README (tier gratuito usa os dados).
+"""
+from __future__ import annotations
+
+import base64
+import json
+import time
+import urllib.error
+import urllib.request
+from typing import Iterator
+
+from . import config
+
+
+class LLMErro(Exception):
+    pass
+
+
+def _post(url: str, corpo: dict, cabecalhos: dict | None = None, timeout: int | None = None):
+    req = urllib.request.Request(
+        url, data=json.dumps(corpo).encode("utf-8"),
+        headers={"Content-Type": "application/json", **(cabecalhos or {})}, method="POST",
+    )
+    try:
+        return urllib.request.urlopen(req, timeout=timeout or config.LLM_TIMEOUT_S)
+    except urllib.error.HTTPError as e:
+        detalhe = e.read().decode("utf-8", "ignore")[:300]
+        raise LLMErro(f"HTTP {e.code}: {detalhe}") from e
+    except Exception as e:
+        raise LLMErro(f"Não consegui contactar o modelo ({e})") from e
+
+
+def estado() -> tuple[bool, str]:
+    """Verifica se o fornecedor configurado está acessível. Para mostrar na barra lateral."""
+    if config.LLM_PROVIDER == "ollama":
+        try:
+            with urllib.request.urlopen(config.OLLAMA_URL.rstrip("/") + "/api/tags", timeout=4) as r:
+                nomes = [m.get("name", "") for m in json.loads(r.read()).get("models", [])]
+        except Exception:
+            return False, f"Ollama não responde em {config.OLLAMA_URL}"
+        m = config.OLLAMA_MODEL
+        if not any(n == m or (":" not in m and n.split(":")[0] == m) for n in nomes):
+            return False, f"Modelo '{config.OLLAMA_MODEL}' não instalado (ollama pull {config.OLLAMA_MODEL})"
+        return True, f"Local: {config.OLLAMA_MODEL}"
+    if config.LLM_PROVIDER == "gemini":
+        if not config.GEMINI_API_KEY:
+            return False, "GEMINI_API_KEY em falta"
+        return True, f"Gemini: {config.GEMINI_MODEL}"
+    return False, f"LLM_PROVIDER desconhecido: {config.LLM_PROVIDER}"
+
+
+def _ollama(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: float) -> Iterator[str]:
+    corpo = {
+        "model": config.OLLAMA_MODEL, "stream": True,
+        "messages": [{"role": m["role"], "content": m["content"]} for m in mensagens],
+        "options": {"temperature": temperatura, "num_predict": max_tokens, "num_ctx": 8192},
+    }
+    with _post(config.OLLAMA_URL.rstrip("/") + "/api/chat", corpo) as resp:
+        for linha in resp:
+            if not linha.strip():
+                continue
+            d = json.loads(linha)
+            if d.get("error"):
+                raise LLMErro(d["error"])
+            parte = d.get("message", {}).get("content", "")
+            if parte:
+                yield parte
+            if d.get("done"):
+                break
+
+
+def _partes_gemini(m: dict) -> list[dict]:
+    """Texto + imagens opcionais (m['imagens'] = [(mime, bytes), ...]), imagens primeiro."""
+    partes = [{"inlineData": {"mimeType": mime, "data": base64.b64encode(dados).decode("ascii")}}
+              for mime, dados in (m.get("imagens") or [])]
+    partes.append({"text": m["content"]})
+    return partes
+
+
+_TRANSITORIOS = ("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "Não consegui contactar")
+
+
+def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: float) -> Iterator[str]:
+    """Gemini em streaming (o texto aparece à medida que é gerado), com novas tentativas (1s, 2s),
+    modelos de reserva em caso de sobrecarga (503/429) e 'pensar' reduzido para responder mais depressa."""
+    if not config.GEMINI_API_KEY:
+        raise LLMErro("GEMINI_API_KEY não definida.")
+    sistema = "\n\n".join(m["content"] for m in mensagens if m["role"] == "system")
+    conteudo = [
+        {"role": "model" if m["role"] == "assistant" else "user", "parts": _partes_gemini(m)}
+        for m in mensagens if m["role"] != "system"
+    ]
+    cfg = {"temperature": temperatura, "maxOutputTokens": max(max_tokens, 4096)}
+    if config.GEMINI_THINKING:
+        cfg["thinkingConfig"] = {"thinkingLevel": config.GEMINI_THINKING}
+    corpo = {"contents": conteudo, "generationConfig": cfg}
+    if sistema:
+        corpo["systemInstruction"] = {"parts": [{"text": sistema}]}
+
+    modelos = [config.GEMINI_MODEL] + [m for m in config.GEMINI_FALLBACKS if m != config.GEMINI_MODEL]
+    ultimo: Exception | None = None
+    for modelo in modelos:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:streamGenerateContent?alt=sse"
+        for tentativa in range(3):
+            emitido = False
+            try:
+                with _post(url, corpo, {"x-goog-api-key": config.GEMINI_API_KEY}) as resp:
+                    for linha in resp:
+                        linha = linha.decode("utf-8", "ignore").strip()
+                        if not linha.startswith("data:"):
+                            continue
+                        dados = linha[5:].strip()
+                        if not dados or dados == "[DONE]":
+                            continue
+                        for parte in json.loads(dados).get("candidates", [{}])[0].get("content", {}).get("parts", []):
+                            t = parte.get("text", "")
+                            if t and not parte.get("thought"):
+                                emitido = True
+                                yield t
+                if emitido:
+                    return
+                ultimo = LLMErro(f"{modelo}: resposta vazia")
+                break                                   # tenta o modelo seguinte
+            except (KeyError, IndexError, TypeError, ValueError):
+                if emitido:
+                    raise LLMErro("Resposta interrompida a meio. Tente de novo.")
+                ultimo = LLMErro(f"{modelo}: resposta inesperada")
+                break
+            except LLMErro as e:
+                if emitido:
+                    raise LLMErro(f"Resposta interrompida a meio ({str(e)[:120]}). Tente de novo.")
+                ultimo = e
+                msg = str(e)
+                if "HTTP 400" in msg and "thinking" in msg.lower() and "thinkingConfig" in corpo["generationConfig"]:
+                    del corpo["generationConfig"]["thinkingConfig"]   # este modelo não aceita: repete sem isso
+                    continue
+                if any(t in msg for t in _TRANSITORIOS):
+                    if tentativa < 2:
+                        time.sleep(1 + tentativa)       # 1s, depois 2s
+                    continue
+                if "HTTP 404" in msg:                   # modelo inexistente: tenta o seguinte
+                    break
+                raise                                   # chave inválida (400/401/403), etc.
+    raise LLMErro(f"Gemini indisponível (tentei {', '.join(modelos)}). Último erro: {str(ultimo)[:200]}")
+
+
+def gerar_stream(mensagens: list[dict], max_tokens: int | None = None, temperatura: float = 0.1) -> Iterator[str]:
+    mt = max_tokens or config.LLM_MAX_TOKENS
+    if config.LLM_PROVIDER == "ollama":
+        return _ollama(mensagens, True, mt, temperatura)
+    if config.LLM_PROVIDER == "gemini":
+        return _gemini(mensagens, False, mt, temperatura)
+    raise LLMErro(f"LLM_PROVIDER desconhecido: {config.LLM_PROVIDER}")
+
+
+def gerar(mensagens: list[dict], max_tokens: int | None = None, temperatura: float = 0.1) -> str:
+    return "".join(gerar_stream(mensagens, max_tokens, temperatura)).strip()
+'''
+
+# ----------------------- core/embeddings.py -----------------------
+_FONTES['embeddings'] = r'''
+"""Pesquisa por significado (embeddings do Gemini) combinada com BM25.
+
+Os vetores de cada manual calculam-se UMA vez e ficam em data/cache. Se a API falhar, a pesquisa
+continua só com BM25 (palavras). A fusão (Reciprocal Rank Fusion) junta as duas listas sem afinar pesos.
+O modelo é multilingue: uma pergunta em português encontra texto de manuais em inglês ou alemão.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+
+from . import config
+from .llm import LLMErro, _post
+from .search import Indice
+
+
+class EmbErro(Exception):
+    pass
+
+
+# Lembra o que a API aceita (muda só se a API recusar): campos no topo ou em embedContentConfig; com/sem dimensão.
+_ESTADO = {"forma": "topo", "usar_dim": True}
+_TRANSITORIOS = ("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "Não consegui contactar")
+
+
+def _url(metodo: str) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{config.EMBED_MODEL}:{metodo}"
+
+
+def _req(texto: str, tarefa: str, forma: str, dim: int | None) -> dict:
+    r = {"model": f"models/{config.EMBED_MODEL}", "content": {"parts": [{"text": texto}]}}
+    if forma == "config":
+        cfg = {"taskType": tarefa}
+        if dim:
+            cfg["outputDimensionality"] = dim
+        r["embedContentConfig"] = cfg
+    else:
+        r["taskType"] = tarefa
+        if dim:
+            r["outputDimensionality"] = dim
+    return r
+
+
+def _chamar(metodo: str, montar) -> dict:
+    if not config.GEMINI_API_KEY:
+        raise EmbErro("GEMINI_API_KEY em falta")
+    ultimo = None
+    for tent in range(6):
+        corpo = montar(_ESTADO["forma"], config.EMBED_DIM if _ESTADO["usar_dim"] else None)
+        try:
+            with _post(_url(metodo), corpo, {"x-goog-api-key": config.GEMINI_API_KEY}, timeout=60) as r:
+                return json.loads(r.read())
+        except LLMErro as e:
+            ultimo, msg = e, str(e)
+            if "HTTP 400" in msg:
+                if _ESTADO["usar_dim"] and "dimensionality" in msg.lower().replace("_", ""):
+                    _ESTADO["usar_dim"] = False
+                    continue
+                if _ESTADO["forma"] == "topo":
+                    _ESTADO["forma"] = "config"
+                    continue
+                raise EmbErro(msg)
+            if any(t in msg for t in _TRANSITORIOS):
+                time.sleep(min(2 ** tent, 20))
+                continue
+            raise EmbErro(msg)
+    raise EmbErro(f"Embeddings indisponíveis: {str(ultimo)[:200]}")
+
+
+def embed_textos(textos: list[str], tarefa: str = "RETRIEVAL_DOCUMENT", progresso=None) -> list[list[float]]:
+    saida: list[list[float]] = []
+    for i in range(0, len(textos), config.EMBED_LOTE):
+        lote = textos[i:i + config.EMBED_LOTE]
+        d = _chamar("batchEmbedContents",
+                    lambda forma, dim: {"requests": [_req(t, tarefa, forma, dim) for t in lote]})
+        embs = d.get("embeddings") or []
+        if len(embs) != len(lote):
+            raise EmbErro("resposta de embeddings incompleta")
+        saida.extend(e["values"] for e in embs)
+        if progresso:
+            progresso(len(saida), len(textos))
+    return saida
+
+
+def embed_consulta(texto: str) -> list[float]:
+    d = _chamar("embedContent", lambda forma, dim: _req(texto, "RETRIEVAL_QUERY", forma, dim))
+    return d["embedding"]["values"]
+
+
+def _normalizar(m):
+    import numpy as np
+    n = np.linalg.norm(m, axis=1, keepdims=True)
+    n[n == 0] = 1.0
+    return (m / n).astype("float32")
+
+
+def obter_matriz(hash_manual: str, chunks, progresso=None):
+    """Matriz (n_chunks x dim) normalizada. Usa cache em disco; só chama a API da primeira vez."""
+    import numpy as np
+    chave = hashlib.sha1(
+        f"{hash_manual}|{config.EMBED_MODEL}|{config.EMBED_DIM}|{config.CHUNK_PALAVRAS}|"
+        f"{config.CHUNK_SOBREPOSICAO}|{len(chunks)}".encode()).hexdigest()
+    ficheiro = config.PASTA_CACHE / f"emb_{chave}.npy"
+    if ficheiro.exists():
+        try:
+            m = np.load(ficheiro)
+            if m.shape[0] == len(chunks):
+                return m
+        except Exception:
+            pass
+    vetores = embed_textos([c.texto for c in chunks], "RETRIEVAL_DOCUMENT", progresso)
+    m = _normalizar(np.array(vetores, dtype="float32"))
+    np.save(ficheiro, m)
+    return m
+
+
+class IndiceHibrido(Indice):
+    """BM25 + embeddings. Sem matriz (ou com semantica=False, ou se a API falhar) = só BM25."""
+
+    def __init__(self, chunks):
+        super().__init__(chunks)
+        self.matriz = None
+        self.ultimo_erro: str | None = None
+        self._pos = {id(c): i for i, c in enumerate(chunks)}
+
+    def procurar(self, consulta, k=5, usar_glossario=True, bonus_codigos=3.0, filtro=None, semantica=True):
+        n = max(k * 4, 20)
+        lex = super().procurar(consulta, k=n, usar_glossario=usar_glossario,
+                               bonus_codigos=bonus_codigos, filtro=filtro)
+        if not semantica or self.matriz is None:
+            return lex[:k]
+        try:
+            import numpy as np
+            q = np.array(embed_consulta(consulta), dtype="float32")
+            if q.shape[0] != self.matriz.shape[1]:
+                raise EmbErro("dimensões diferentes")
+            q = q / (np.linalg.norm(q) or 1.0)
+            sims = self.matriz @ q
+            ordem = [int(i) for i in np.argsort(-sims)[:n]]
+        except Exception as e:                       # qualquer falha: continua só com palavras
+            self.ultimo_erro = str(e)[:200]
+            return lex[:k]
+        pontos: dict[int, float] = {}
+        for r, (c, _) in enumerate(lex):
+            i = self._pos[id(c)]
+            pontos[i] = pontos.get(i, 0.0) + 1.0 / (60 + r)
+        rank = 0
+        for i in ordem:
+            if filtro and not filtro(self.chunks[i]):
+                continue
+            pontos[i] = pontos.get(i, 0.0) + 1.0 / (60 + rank)
+            rank += 1
+        top = sorted(pontos.items(), key=lambda x: x[1], reverse=True)[:k]
+        return [(self.chunks[i], s) for i, s in top]
+'''
+
 # ----------------------- core/casos.py -----------------------
 _FONTES['casos'] = r'''
-"""Histórico de avarias do próprio sistema: casos validados pelos técnicos (botão 'Resolveu')."""
+"""Base de casos de avarias: histórico importado (Excel) + casos validados pelos técnicos."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -409,8 +739,8 @@ from .search import Chunk, Indice
 
 @dataclass
 class Caso:
-    id: str
-    origem: str            # "Feedback"
+    id: str                # etiqueta usada nas citações: "OT 123", "FB7", "H12"
+    origem: str            # "Histórico" (importado) ou "Feedback" (validado por técnico)
     data: str = ""
     equipamento: str = ""
     avaria: str = ""
@@ -440,6 +770,8 @@ class BaseCasos:
             caso = self.casos[ch.meta["idx"]]
             if equipamento and equipamento.lower() in caso.equipamento.lower():
                 sc *= 1.5
+            if caso.origem == "Feedback":      # confirmado por um técnico
+                sc *= 1.25
             res.append((caso, sc))
         res.sort(key=lambda x: x[1], reverse=True)
         return res[:k]
@@ -481,6 +813,21 @@ CREATE TABLE IF NOT EXISTS feedback (
     solucao_real TEXT,
     nota TEXT
 );
+CREATE TABLE IF NOT EXISTS casos_importados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT, origem TEXT, ref TEXT, data TEXT, equipamento TEXT,
+    avaria TEXT, causa TEXT, solucao TEXT, tempo TEXT,
+    chave TEXT UNIQUE
+);
+CREATE TABLE IF NOT EXISTS testes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    manual TEXT, equipamento TEXT, sintoma TEXT, causa_real TEXT,
+    pagina_esperada INTEGER, palavras TEXT
+);
+CREATE TABLE IF NOT EXISTS execucoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT, manual TEXT, modo TEXT, n INTEGER, hit REAL, mrr REAL, extra TEXT
+);
 """
 
 
@@ -495,6 +842,9 @@ def _ligar():
         con.commit()
     finally:
         con.close()
+
+
+ligar = _ligar
 
 
 def registar_resposta(utilizador, manual, equipamento, pergunta, resposta, paginas, casos_usados) -> int:
@@ -558,140 +908,156 @@ def exportar_csv() -> str:
     return buf.getvalue()
 '''
 
-# ----------------------- core/llm.py -----------------------
-_FONTES['llm'] = r'''
-"""Cliente LLM sem dependências externas (só urllib).
+# ----------------------- core/importar.py -----------------------
+_FONTES['importar'] = r'''
+"""Importação de avarias antigas (Excel/CSV do Manwinwin ou folha própria) para a base de casos.
 
-- ollama: modelo local (defeito). Sem chave, sem internet, dados ficam na empresa.
-- gemini: API opcional. ATENÇÃO à privacidade: ver README (tier gratuito usa os dados).
+Só LÊ o ficheiro carregado e guarda uma cópia em SQLite. Não liga ao Manwinwin.
 """
 from __future__ import annotations
 
-import json
+import hashlib
+import io
+import re
 import time
-import urllib.error
-import urllib.request
-from typing import Iterator
 
-from . import config
+from . import textutil
+from .casos import Caso
+from .feedback import ligar
 
+CAMPOS = [
+    ("avaria", "Descrição da avaria *"),
+    ("solucao", "Solução / trabalho realizado"),
+    ("causa", "Causa"),
+    ("equipamento", "Equipamento / máquina"),
+    ("id", "Nº da ordem (OT)"),
+    ("data", "Data"),
+    ("tempo", "Tempo de paragem"),
+]
 
-class LLMErro(Exception):
-    pass
-
-
-def _post(url: str, corpo: dict, cabecalhos: dict | None = None, timeout: int | None = None):
-    req = urllib.request.Request(
-        url, data=json.dumps(corpo).encode("utf-8"),
-        headers={"Content-Type": "application/json", **(cabecalhos or {})}, method="POST",
-    )
-    try:
-        return urllib.request.urlopen(req, timeout=timeout or config.LLM_TIMEOUT_S)
-    except urllib.error.HTTPError as e:
-        detalhe = e.read().decode("utf-8", "ignore")[:300]
-        raise LLMErro(f"HTTP {e.code}: {detalhe}") from e
-    except Exception as e:
-        raise LLMErro(f"Não consegui contactar o modelo ({e})") from e
-
-
-def estado() -> tuple[bool, str]:
-    """Verifica se o fornecedor configurado está acessível. Para mostrar na barra lateral."""
-    if config.LLM_PROVIDER == "ollama":
-        try:
-            with urllib.request.urlopen(config.OLLAMA_URL.rstrip("/") + "/api/tags", timeout=4) as r:
-                nomes = [m.get("name", "") for m in json.loads(r.read()).get("models", [])]
-        except Exception:
-            return False, f"Ollama não responde em {config.OLLAMA_URL}"
-        m = config.OLLAMA_MODEL
-        if not any(n == m or (":" not in m and n.split(":")[0] == m) for n in nomes):
-            return False, f"Modelo '{config.OLLAMA_MODEL}' não instalado (ollama pull {config.OLLAMA_MODEL})"
-        return True, f"Local: {config.OLLAMA_MODEL}"
-    if config.LLM_PROVIDER == "gemini":
-        if not config.GEMINI_API_KEY:
-            return False, "GEMINI_API_KEY em falta"
-        return True, f"Gemini: {config.GEMINI_MODEL}"
-    return False, f"LLM_PROVIDER desconhecido: {config.LLM_PROVIDER}"
+ALIASES = {
+    "id": ["n ot", "n o ot", "no ot", "numero ot", "ordem", "n ordem", "numero", "codigo", "ot", "id"],
+    "data": ["data fim", "data conclusao", "data inicio", "data abertura", "data"],
+    "equipamento": ["designacao equipamento", "equipamento", "maquina", "ativo", "cod equipamento"],
+    "avaria": ["descricao avaria", "descricao do problema", "avaria", "problema", "sintoma", "pedido", "descricao"],
+    "causa": ["causa raiz", "causa avaria", "causa"],
+    "solucao": ["trabalho realizado", "descricao intervencao", "intervencao", "solucao",
+                "acao corretiva", "accao", "observacoes", "resolucao"],
+    "tempo": ["tempo paragem", "horas paragem", "duracao", "tempo"],
+}
 
 
-def _ollama(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: float) -> Iterator[str]:
-    corpo = {
-        "model": config.OLLAMA_MODEL, "messages": mensagens, "stream": True,
-        "options": {"temperature": temperatura, "num_predict": max_tokens, "num_ctx": 8192},
-    }
-    with _post(config.OLLAMA_URL.rstrip("/") + "/api/chat", corpo) as resp:
-        for linha in resp:
-            if not linha.strip():
-                continue
-            d = json.loads(linha)
-            if d.get("error"):
-                raise LLMErro(d["error"])
-            parte = d.get("message", {}).get("content", "")
-            if parte:
-                yield parte
-            if d.get("done"):
+def _norm_cab(c) -> str:
+    return re.sub(r"[^a-z0-9 ]", " ", textutil.sem_acentos(str(c).lower())).strip()
+
+
+def mapear_colunas(colunas) -> dict[str, str]:
+    """campo -> nome real da coluna (exata primeiro, depois 'contém')."""
+    colunas = [str(c) for c in colunas]
+    norm = {c: _norm_cab(c) for c in colunas}
+    mapa: dict[str, str] = {}
+    usadas: set[str] = set()
+    for campo, aliases in ALIASES.items():
+        escolha = None
+        for al in aliases:
+            escolha = next((c for c, n in norm.items() if n == al and c not in usadas), None)
+            if escolha:
                 break
-
-
-_TRANSITORIOS = ("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "Não consegui contactar")
-
-
-def _gemini(mensagens: list[dict], stream: bool, max_tokens: int, temperatura: float) -> Iterator[str]:
-    """Gemini com novas tentativas (1s, 2s) e modelos de reserva quando há sobrecarga (503/429)."""
-    if not config.GEMINI_API_KEY:
-        raise LLMErro("GEMINI_API_KEY não definida.")
-    sistema = "\n\n".join(m["content"] for m in mensagens if m["role"] == "system")
-    conteudo = [
-        {"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
-        for m in mensagens if m["role"] != "system"
-    ]
-    corpo = {
-        "contents": conteudo,
-        "generationConfig": {"temperature": temperatura, "maxOutputTokens": max(max_tokens, 4096)},
-    }
-    if sistema:
-        corpo["systemInstruction"] = {"parts": [{"text": sistema}]}
-
-    modelos = [config.GEMINI_MODEL] + [m for m in config.GEMINI_FALLBACKS if m != config.GEMINI_MODEL]
-    ultimo: Exception | None = None
-    for modelo in modelos:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
-        for tentativa in range(3):
-            try:
-                with _post(url, corpo, {"x-goog-api-key": config.GEMINI_API_KEY}) as resp:
-                    d = json.loads(resp.read())
-                texto = "".join(p.get("text", "") for p in d["candidates"][0]["content"]["parts"])
-                if texto.strip():
-                    yield texto
-                    return
-                ultimo = LLMErro(f"{modelo}: resposta vazia")
-                break                                   # tenta o modelo seguinte
-            except (KeyError, IndexError, TypeError):
-                ultimo = LLMErro(f"{modelo}: resposta inesperada")
-                break
-            except LLMErro as e:
-                ultimo = e
-                msg = str(e)
-                if any(t in msg for t in _TRANSITORIOS):
-                    if tentativa < 2:
-                        time.sleep(1 + tentativa)       # 1s, depois 2s
-                    continue
-                if "HTTP 404" in msg:                   # modelo inexistente: tenta o seguinte
+        if not escolha:
+            for al in aliases:
+                escolha = next((c for c, n in norm.items() if al in n and c not in usadas), None)
+                if escolha:
                     break
-                raise                                   # chave inválida (400/401/403), etc.
-    raise LLMErro(f"Gemini indisponível (tentei {', '.join(modelos)}). Último erro: {str(ultimo)[:200]}")
+        if escolha:
+            mapa[campo] = escolha
+            usadas.add(escolha)
+    return mapa
 
 
-def gerar_stream(mensagens: list[dict], max_tokens: int | None = None, temperatura: float = 0.1) -> Iterator[str]:
-    mt = max_tokens or config.LLM_MAX_TOKENS
-    if config.LLM_PROVIDER == "ollama":
-        return _ollama(mensagens, True, mt, temperatura)
-    if config.LLM_PROVIDER == "gemini":
-        return _gemini(mensagens, False, mt, temperatura)
-    raise LLMErro(f"LLM_PROVIDER desconhecido: {config.LLM_PROVIDER}")
+def _detetar_cabecalho(bruto):
+    """Exports têm por vezes linhas de título antes do cabeçalho: escolhe a linha que mais parece um cabeçalho."""
+    melhor, melhor_i = -1, 0
+    for i in range(min(15, len(bruto))):
+        cel = [str(x) for x in bruto.iloc[i].tolist() if str(x) != "nan"]
+        pts = len(mapear_colunas(cel))
+        if pts > melhor:
+            melhor, melhor_i = pts, i
+    cab, vistos = [], {}
+    for j, x in enumerate(bruto.iloc[melhor_i].tolist()):
+        nome = str(x).strip() if str(x) != "nan" else f"coluna_{j + 1}"
+        vistos[nome] = vistos.get(nome, 0) + 1
+        cab.append(nome if vistos[nome] == 1 else f"{nome}_{vistos[nome]}")
+    df = bruto.iloc[melhor_i + 1:].reset_index(drop=True)
+    df.columns = cab
+    return df
 
 
-def gerar(mensagens: list[dict], max_tokens: int | None = None, temperatura: float = 0.1) -> str:
-    return "".join(gerar_stream(mensagens, max_tokens, temperatura)).strip()
+def ler_tabela(dados: bytes, nome: str):
+    import pandas as pd
+    suf = nome.lower().rsplit(".", 1)[-1] if "." in nome else ""
+    if suf in ("xlsx", "xlsm"):
+        return _detetar_cabecalho(pd.read_excel(io.BytesIO(dados), dtype=str, header=None))
+    if suf == "xls":
+        raise ValueError("Ficheiro .xls antigo: abra no Excel e use 'Guardar como' .xlsx")
+    for enc in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            df = pd.read_csv(io.BytesIO(dados), dtype=str, sep=None, engine="python", encoding=enc)
+            df.columns = [str(c) for c in df.columns]
+            return df
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("Não consegui ler o ficheiro (codificação desconhecida).")
+
+
+def importar_df(df, escolhas: dict, origem: str) -> tuple[int, int, int]:
+    """escolhas: campo -> nome da coluna (ou None). Devolve (novos, duplicados, ignorados)."""
+    novos = dup = ign = 0
+    agora = time.strftime("%Y-%m-%d %H:%M:%S")
+    with ligar() as con:
+        for _, row in df.iterrows():
+            def v(campo):
+                col = escolhas.get(campo)
+                x = row.get(col) if col else ""
+                return "" if x is None or str(x).strip().lower() in ("nan", "none", "nat") else str(x).strip()
+            avaria, solucao = v("avaria"), v("solucao")
+            if not (avaria or solucao):
+                ign += 1
+                continue
+            ref, equip, causa, data, tempo = v("id"), v("equipamento"), v("causa"), v("data")[:10], v("tempo")
+            chave = hashlib.sha1("|".join(textutil.sem_acentos(x.lower())
+                                          for x in (ref, equip, avaria, causa, solucao)).encode()).hexdigest()
+            cur = con.execute(
+                "INSERT OR IGNORE INTO casos_importados (ts, origem, ref, data, equipamento, avaria, causa, solucao, tempo, chave)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)", (agora, origem, ref, data, equip, avaria, causa, solucao, tempo, chave))
+            if cur.rowcount:
+                novos += 1
+            else:
+                dup += 1
+    return novos, dup, ign
+
+
+def carregar_importados() -> list[Caso]:
+    with ligar() as con:
+        linhas = con.execute("SELECT * FROM casos_importados ORDER BY id").fetchall()
+    return [Caso(id=(f"OT {r['ref']}" if r["ref"] else f"H{r['id']}"), origem="Histórico", data=r["data"] or "",
+                 equipamento=r["equipamento"] or "", avaria=r["avaria"] or "", causa=r["causa"] or "",
+                 solucao=r["solucao"] or "", tempo=r["tempo"] or "") for r in linhas]
+
+
+def contar() -> int:
+    with ligar() as con:
+        return con.execute("SELECT COUNT(*) FROM casos_importados").fetchone()[0]
+
+
+def listar_origens() -> list[tuple[str, int]]:
+    with ligar() as con:
+        return [(r[0], r[1]) for r in con.execute(
+            "SELECT origem, COUNT(*) FROM casos_importados GROUP BY origem ORDER BY MAX(id) DESC")]
+
+
+def apagar_origem(origem: str) -> int:
+    with ligar() as con:
+        return con.execute("DELETE FROM casos_importados WHERE origem=?", (origem,)).rowcount
 '''
 
 # ----------------------- core/history.py -----------------------
@@ -758,7 +1124,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import config, textutil
-from .search import Chunk, Indice, dividir_em_chunks
+from .embeddings import IndiceHibrido
+from .search import Chunk, dividir_em_chunks
 
 
 @dataclass
@@ -774,12 +1141,12 @@ class Manual:
     def n_paginas(self) -> int:
         return len(self.textos)
 
-    def construir_indice(self) -> Indice:
+    def construir_indice(self) -> IndiceHibrido:
         chunks: list[Chunk] = []
         for i, t in enumerate(self.textos, start=1):
             for parte in dividir_em_chunks(t, config.CHUNK_PALAVRAS, config.CHUNK_SOBREPOSICAO):
                 chunks.append(Chunk(parte, {"pagina": i}))
-        return Indice(chunks)
+        return IndiceHibrido(chunks)
 
 
 def listar_manuais() -> dict[str, Path]:
@@ -1023,14 +1390,14 @@ def html_visualizador(imagem: bytes, mime: str, altura: int = 640) -> str:
 _FONTES['diagnosis'] = r'''
 """Montagem do prompt de diagnóstico, regras de segurança e formatação das fontes.
 
-Princípio: o sistema SUGERE, nunca ordena. Só afirma o que está nas fontes (manual e casos
-validados por técnicos) ou rotula como conhecimento geral a confirmar.
+Princípio: o sistema SUGERE, nunca ordena. Só afirma o que está nas fontes (manual, casos
+resolvidos) ou rotula como conhecimento geral a confirmar.
 """
 from __future__ import annotations
 
 import re
 
-from . import llm
+from . import config, llm, textutil
 from .casos import Caso
 from .search import Chunk, reescrever_consulta_simples
 
@@ -1039,14 +1406,15 @@ PROMPT_SISTEMA = """És um assistente de apoio ao diagnóstico para técnicos de
 O TEU PAPEL: SUGERIR, nunca decidir nem ordenar. O técnico é quem decide e executa; um erro teu pode causar danos ou acidentes.
 
 REGRAS OBRIGATÓRIAS
-1. Usa APENAS as fontes fornecidas: trechos do manual e casos já resolvidos e validados por técnicos. O conhecimento geral só pode aparecer rotulado como "(conhecimento geral – confirmar)".
+1. Usa APENAS as fontes fornecidas: trechos do manual, imagens de páginas do manual e casos já resolvidos (histórico importado e casos validados por técnicos). O conhecimento geral só pode aparecer rotulado como "(conhecimento geral – confirmar)".
 2. NUNCA inventes bornes, pinos, referências, valores de tensão ou parâmetros. Se o manual não o indica, diz exatamente: "Não encontrei isso no manual fornecido."
 3. Formula sempre como recomendação ou pergunta, por exemplo: "O que acha de medir a tensão entre os bornes X1.1 e X1.2? Deve rondar 24 V segundo [Manual p.12]." Nunca uses imperativos secos.
-4. Cita a origem de cada afirmação: [Manual p.N] para o manual, [FBid] para casos validados por técnicos.
+4. Cita a origem de cada afirmação: [Manual p.N] para o manual e, para os casos, exatamente a etiqueta que aparece na lista (por exemplo [OT 123] ou [FB7]).
 5. Lê a conversa: não repitas testes que o técnico já fez; avança para a hipótese seguinte.
 6. Se vários casos antigos apontam a mesma causa, diz quantos e com que frequência; se são só vagamente parecidos, di-lo.
 7. Os trechos do manual podem estar noutro idioma (inglês, alemão...). Responde sempre em português e traduz os termos técnicos.
 8. Se a informação for insuficiente, faz UMA pergunta curta ao técnico (modelo da máquina, código de erro, o que mudou) em vez de adivinhar.
+9. Se receberes imagens de páginas (esquemas), só descreves bornes, ligações e referências que consigas LER com clareza; se algo estiver ilegível ou ambíguo, diz que não consegues confirmar na imagem e pede ao técnico para verificar no esquema.
 
 FORMATO (curto, sem enrolar)
 **Leitura do problema:** 1–2 frases.
@@ -1081,9 +1449,8 @@ def formatar_casos(casos: list[tuple[Caso, float]]) -> str:
         return "(ainda sem casos parecidos registados)"
     linhas = []
     for c, _ in casos:
-        etiqueta = c.id
         linhas.append(
-            f"[{etiqueta}] {c.data} | Equip.: {c.equipamento or '?'} | Avaria: {c.avaria or '?'} | "
+            f"[{c.id}] {c.data} | Equip.: {c.equipamento or '?'} | Avaria: {c.avaria or '?'} | "
             f"Causa: {c.causa or 'não registada'} | Solução: {c.solucao or 'não registada'}"
             + (" | VALIDADO por técnico" if c.origem == "Feedback" else "")
         )
@@ -1091,24 +1458,38 @@ def formatar_casos(casos: list[tuple[Caso, float]]) -> str:
 
 
 def montar_mensagens(pergunta: str, historico: list[dict], trechos, casos, manual_nome: str,
-                     equipamento: str | None, idioma_manual: str, max_hist: int = 6) -> list[dict]:
+                     equipamento: str | None, idioma_manual: str, max_hist: int = 6,
+                     imagens: list | None = None, paginas_imagem: list[int] | None = None) -> list[dict]:
     contexto = (
         f"MANUAL: {manual_nome} (idioma: {idioma_manual})\n"
         f"EQUIPAMENTO: {equipamento or 'não indicado'}\n\n"
         f"TRECHOS DO MANUAL:\n{formatar_trechos(trechos)}\n\n"
         f"CASOS PARECIDOS JÁ RESOLVIDOS:\n{formatar_casos(casos)}\n\n"
-        f"MENSAGEM ATUAL DO TÉCNICO: {pergunta}"
     )
+    if imagens:
+        pags = ", ".join(f"p.{p}" for p in (paginas_imagem or []))
+        contexto += (f"IMAGENS ANEXAS: páginas do manual ({pags}) como imagem. Usa-as para ver esquemas, bornes e "
+                     f"ligações; só afirma o que estiver legível.\n\n")
+    contexto += f"MENSAGEM ATUAL DO TÉCNICO: {pergunta}"
     msgs = [{"role": "system", "content": PROMPT_SISTEMA}]
     for m in historico[-max_hist:]:
         msgs.append({"role": m["role"], "content": m["content"]})
-    msgs.append({"role": "user", "content": contexto})
+    ultimo = {"role": "user", "content": contexto}
+    if imagens:
+        ultimo["imagens"] = imagens
+    msgs.append(ultimo)
     return msgs
 
 
-def reescrever_consulta(pergunta: str, historico: list[dict], usar_llm: bool = True) -> str:
-    """'E agora?' sozinho não pesquisa nada: junta contexto da conversa numa consulta autónoma."""
-    if not historico:
+def _ja_e_autonoma(pergunta: str) -> bool:
+    """Pergunta completa (várias palavras ou com código de erro): não precisa de contexto nem de IA."""
+    return len(pergunta.split()) >= 8 or bool(textutil.codigos_numericos(pergunta))
+
+
+def reescrever_consulta(pergunta: str, historico: list[dict], usar_llm: bool = False) -> str:
+    """'E agora?' sozinho não pesquisa nada. Por defeito junta as últimas perguntas (instantâneo, grátis).
+    Só chama a IA se usar_llm=True e a pergunta for curta/dependente do contexto."""
+    if not historico or _ja_e_autonoma(pergunta):
         return pergunta
     simples = reescrever_consulta_simples(historico, pergunta)
     if not usar_llm:
@@ -1126,6 +1507,22 @@ def reescrever_consulta(pergunta: str, historico: list[dict], usar_llm: bool = T
         return simples
 
 
+def preparar(pergunta, historico, manual, indice, base, equipamento, semantica=True,
+             usar_llm_reescrita=False, escolher_imagens=None):
+    """Pesquisa no manual e nos casos e monta as mensagens. Partilhado pela app e pelo teste de qualidade.
+    escolher_imagens(trechos) -> (imagens, paginas) é opcional. Devolve (mensagens, trechos, casos)."""
+    consulta = reescrever_consulta(pergunta, historico, usar_llm_reescrita)
+    try:
+        trechos = indice.procurar(consulta, k=config.TOP_CHUNKS_MANUAL, semantica=semantica)
+    except TypeError:
+        trechos = indice.procurar(consulta, k=config.TOP_CHUNKS_MANUAL)
+    casos = base.procurar(consulta, equipamento, k=config.TOP_CASOS)
+    imagens, paginas_img = escolher_imagens(trechos) if escolher_imagens else ([], [])
+    msgs = montar_mensagens(pergunta, historico, trechos, casos, manual.nome, equipamento, manual.idioma,
+                            imagens=imagens or None, paginas_imagem=paginas_img)
+    return msgs, trechos, casos
+
+
 def paginas_citadas(resposta: str, n_paginas: int) -> list[int]:
     pags = []
     for m in re.finditer(r"\[Manual p\.?\s*(\d+)\]", resposta, re.IGNORECASE):
@@ -1135,7 +1532,119 @@ def paginas_citadas(resposta: str, n_paginas: int) -> list[int]:
     return pags
 '''
 
-_ORDEM = ['config', 'textutil', 'auth', 'search', 'casos', 'feedback', 'llm', 'history', 'pdf_store', 'translate', 'viewer', 'diagnosis']
+# ----------------------- core/avaliacao.py -----------------------
+_FONTES['avaliacao'] = r'''
+"""Teste de qualidade: casos reais com a resposta certa conhecida -> mede se a app acerta.
+
+Dois testes:
+  - pesquisa (grátis, instantâneo): a página certa aparece nos trechos encontrados?
+  - com IA (usa a API): a resposta cita a página certa e menciona as palavras-chave da solução?
+"""
+from __future__ import annotations
+
+import json
+import time
+
+from . import diagnosis, textutil
+from .feedback import ligar
+
+
+def adicionar_teste(manual, equipamento, sintoma, causa_real, pagina_esperada, palavras) -> int:
+    with ligar() as con:
+        return con.execute(
+            "INSERT INTO testes (manual, equipamento, sintoma, causa_real, pagina_esperada, palavras) VALUES (?,?,?,?,?,?)",
+            (manual, (equipamento or "").strip(), sintoma.strip(), (causa_real or "").strip(),
+             int(pagina_esperada) if pagina_esperada else None, (palavras or "").strip())).lastrowid
+
+
+def listar_testes(manual) -> list[dict]:
+    with ligar() as con:
+        return [dict(r) for r in con.execute("SELECT * FROM testes WHERE manual=? ORDER BY id", (manual,))]
+
+
+def apagar_teste(id_: int) -> None:
+    with ligar() as con:
+        con.execute("DELETE FROM testes WHERE id=?", (id_,))
+
+
+def _paginas(resultados) -> list[int]:
+    pags: list[int] = []
+    for c, _ in resultados:
+        if c.meta["pagina"] not in pags:
+            pags.append(c.meta["pagina"])
+    return pags
+
+
+def avaliar_recuperacao(indice, testes, k=5, semantica=False) -> dict:
+    linhas, n, hits, rr = [], 0, 0, 0.0
+    for t in testes:
+        try:
+            pags = _paginas(indice.procurar(t["sintoma"], k=k, semantica=semantica))
+        except TypeError:                      # índice simples, sem parâmetro 'semantica'
+            pags = _paginas(indice.procurar(t["sintoma"], k=k))
+        esp = t["pagina_esperada"]
+        ok = None
+        if esp:
+            n += 1
+            ok = esp in pags
+            if ok:
+                hits += 1
+                rr += 1.0 / (pags.index(esp) + 1)
+        linhas.append({"teste": t["id"], "sintoma": t["sintoma"][:70], "página certa": esp,
+                       "páginas encontradas": ", ".join(map(str, pags)), "acertou": {True: "✅", False: "❌", None: "—"}[ok]})
+    return {"n": n, "hit": hits / n if n else 0.0, "mrr": rr / n if n else 0.0, "linhas": linhas}
+
+
+def avaliar_com_ia(testes, manual, indice, base, semantica, gerar, pausa=1.0, progresso=None) -> dict:
+    linhas, n_pag, cita, soma_pal, n_pal, erros = [], 0, 0, 0.0, 0, 0
+    for i, t in enumerate(testes, start=1):
+        resp, erro = "", ""
+        try:
+            msgs, _, _ = diagnosis.preparar(t["sintoma"], [], manual, indice, base, t["equipamento"] or None,
+                                            semantica=semantica)
+            resp = gerar(msgs)
+        except Exception as e:
+            erro = str(e)[:100]
+            erros += 1
+        pags = diagnosis.paginas_citadas(resp, manual.n_paginas)
+        esp = t["pagina_esperada"]
+        ok = None
+        if esp:
+            n_pag += 1
+            ok = esp in pags
+            cita += 1 if ok else 0
+        palavras = [p.strip() for p in (t["palavras"] or "").split(",") if p.strip()]
+        cob = None
+        if palavras:
+            texto = textutil.sem_acentos(resp.lower())
+            cob = sum(1 for p in palavras if textutil.sem_acentos(p.lower()) in texto) / len(palavras)
+            soma_pal += cob
+            n_pal += 1
+        linhas.append({"teste": t["id"], "sintoma": t["sintoma"][:60], "cita a página certa": {True: "✅", False: "❌", None: "—"}[ok],
+                       "palavras-chave": "—" if cob is None else f"{cob * 100:.0f}%", "erro": erro})
+        if progresso:
+            progresso(i, len(testes))
+        if pausa and i < len(testes):
+            time.sleep(pausa)
+    return {"n": n_pag, "hit": cita / n_pag if n_pag else 0.0, "mrr": soma_pal / n_pal if n_pal else 0.0,
+            "erros": erros, "linhas": linhas}
+
+
+def registar_execucao(manual, modo, r: dict) -> None:
+    with ligar() as con:
+        con.execute("INSERT INTO execucoes (ts, manual, modo, n, hit, mrr, extra) VALUES (?,?,?,?,?,?,?)",
+                    (time.strftime("%Y-%m-%d %H:%M"), manual, modo, r["n"], r["hit"], r["mrr"],
+                     json.dumps({"erros": r.get("erros", 0)})))
+
+
+def listar_execucoes(manual, limite=12) -> list[dict]:
+    with ligar() as con:
+        return [{"quando": r["ts"], "teste": r["modo"], "casos": r["n"], "acerto": f"{r['hit'] * 100:.0f}%",
+                 "MRR / palavras": f"{r['mrr']:.2f}"} for r in con.execute(
+            "SELECT * FROM execucoes WHERE manual=? ORDER BY id DESC LIMIT ?", (manual, limite))]
+'''
+
+_ORDEM = ['config', 'textutil', 'auth', 'search', 'llm', 'embeddings', 'casos', 'feedback', 'importar', 'history', 'pdf_store', 'translate', 'viewer', 'diagnosis', 'avaliacao']
 _pkg = _types.ModuleType("core")
 _pkg.__path__ = []
 _sys.modules["core"] = _pkg
@@ -1153,7 +1662,8 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import auth, casos as mod_casos, config, diagnosis, feedback, history, llm, pdf_store, translate, viewer
+from core import (auth, avaliacao, casos as mod_casos, config, diagnosis, embeddings, feedback, history,
+                  importar, llm, pdf_store, translate, viewer)
 
 st.set_page_config(page_title="Assistente MGC", page_icon="⚡", layout="wide")
 
@@ -1211,12 +1721,12 @@ def _abrir_manual(caminho: str, mtime: float):
 
 
 def _assinatura_casos():
-    return len(feedback.casos_validados())
+    return (len(feedback.casos_validados()), importar.contar())
 
 
 @st.cache_resource(show_spinner="A carregar casos resolvidos...")
 def _base_casos(assinatura):
-    return mod_casos.BaseCasos(feedback.casos_validados())
+    return mod_casos.BaseCasos(importar.carregar_importados() + feedback.casos_validados())
 
 
 @st.cache_data(show_spinner=False, max_entries=12)
@@ -1227,6 +1737,12 @@ def _pagina_renderizada(caminho: str, hash_manual: str, pagina: int, zoom: float
     return dados, mime, blocos
 
 
+@st.cache_data(show_spinner=False, max_entries=20)
+def _imagem_para_ia(caminho: str, pagina: int) -> bytes:
+    dados, _ = viewer.renderizar_pagina(caminho, pagina, 1.8, None, "png")
+    return dados
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def _estado_llm(_chave: int):
     return llm.estado()
@@ -1235,6 +1751,7 @@ def _estado_llm(_chave: int):
 # ------------------------------------------------------------------ barra lateral
 with st.sidebar:
     st.markdown(f"### 👤 {utilizador}")
+    modo = st.radio("Modo", ["💬 Diagnóstico", "🧪 Qualidade"], horizontal=True, label_visibility="collapsed")
     manuais = pdf_store.listar_manuais()
 
     with st.expander("➕ Adicionar manual (PDF)"):
@@ -1263,10 +1780,39 @@ with st.sidebar:
     st.caption(f"Manual: {manual.n_paginas} págs · idioma detetado: **{manual.idioma}**")
     if manual.paginas_sem_texto:
         st.caption(f"{len(manual.paginas_sem_texto)} págs sem texto pesquisável (só desenho).")
-    st.caption(f"Casos resolvidos registados: {len(base.casos)}")
+    n_imp = importar.contar()
+    st.caption(f"Casos: {n_imp} importados · {len(base.casos) - n_imp} validados pelos técnicos")
 
     ok_llm, msg_llm = _estado_llm(0)
     (st.success if ok_llm else st.error)("🧠 " + msg_llm)
+
+    # ---- pesquisa por significado (embeddings) e imagens dos esquemas: só com Gemini
+    tem_gemini = config.LLM_PROVIDER == "gemini" and bool(config.GEMINI_API_KEY)
+    st.divider()
+    st.markdown("**Inteligência**")
+    usar_semantica = st.checkbox("🔎 Pesquisa por significado (mais precisa)", value=tem_gemini,
+                                 disabled=not tem_gemini,
+                                 help="Junta à pesquisa por palavras uma pesquisa por significado (embeddings do Gemini). "
+                                      "Encontra o texto certo mesmo que o manual esteja noutro idioma.")
+    chave_falha = f"emb_falhou_{manual.hash}"
+    if usar_semantica and indice.matriz is None and not st.session_state.get(chave_falha):
+        barra = st.progress(0.0, text="A preparar a pesquisa por significado (só na 1.ª vez)...")
+        try:
+            indice.matriz = embeddings.obter_matriz(
+                manual.hash, indice.chunks, lambda a, b: barra.progress(a / b, text=f"A preparar... {a}/{b}"))
+        except Exception as e:
+            st.session_state[chave_falha] = str(e)[:300]
+        barra.empty()
+    if usar_semantica and st.session_state.get(chave_falha):
+        st.warning("Pesquisa por significado indisponível; a usar só palavras. " + st.session_state[chave_falha][:150])
+        if st.button("Tentar de novo", key="emb_retry"):
+            st.session_state.pop(chave_falha, None)
+            st.rerun()
+    modo_img = st.radio("👁️ A IA vê a página (imagem)", ["Auto", "Sempre", "Nunca"], horizontal=True,
+                        disabled=not tem_gemini,
+                        help="Auto: envia a imagem das páginas com pouco texto (esquemas). Sempre: também a página em foco. "
+                             "Só com Gemini.") if tem_gemini else "Nunca"
+    reescrever = st.checkbox("Usar IA para entender perguntas curtas (mais lento)", value=False)
 
     st.divider()
     st.markdown("**Visualização**")
@@ -1275,7 +1821,46 @@ with st.sidebar:
                            help=None if pode_traduzir else "O manual já está em português.")
     formato = st.radio("Qualidade", ["png", "svg"], format_func=lambda x: "Imagem (rápida)" if x == "png"
                        else "Vetorial (zoom nítido)", horizontal=True)
-    reescrever = st.checkbox("Usar IA para entender 'e agora?' (mais lento)", value=True)
+
+    # ---- importar avarias antigas (Excel / CSV)
+    st.divider()
+    with st.expander("📥 Importar avarias (Excel do Manwinwin)"):
+        if st.session_state.get("msg_imp"):
+            st.success(st.session_state.pop("msg_imp"))
+        st.caption("Carregue um Excel (.xlsx) ou CSV com avarias e soluções antigas. "
+                   "A app reconhece as colunas; confirme abaixo.")
+        fich = st.file_uploader("Excel (.xlsx) ou CSV", type=["xlsx", "xlsm", "csv", "txt"], key="up_av")
+        if fich is not None:
+            df_imp = None
+            try:
+                df_imp = importar.ler_tabela(fich.getvalue(), fich.name)
+            except Exception as e:
+                st.error(f"Não consegui ler o ficheiro: {e}")
+            if df_imp is not None:
+                colunas = [str(c) for c in df_imp.columns]
+                auto = importar.mapear_colunas(colunas)
+                opcoes = ["(nenhuma)"] + colunas
+                escolhas = {}
+                for campo, rotulo in importar.CAMPOS:
+                    padrao = auto.get(campo)
+                    escolhas[campo] = st.selectbox(
+                        rotulo, opcoes, index=opcoes.index(padrao) if padrao in opcoes else 0,
+                        key=f"map_{campo}_{fich.name}_{fich.size}")
+                st.dataframe(df_imp.head(5), use_container_width=True)
+                if escolhas["avaria"] == "(nenhuma)":
+                    st.warning("Escolha a coluna com a descrição da avaria.")
+                elif st.button(f"Importar {len(df_imp)} linhas", key="btn_importar", use_container_width=True):
+                    novos, dup, ign = importar.importar_df(
+                        df_imp, {k: (None if v == "(nenhuma)" else v) for k, v in escolhas.items()}, fich.name)
+                    st.session_state.msg_imp = (f"{novos} avarias importadas · {dup} já existiam · "
+                                                f"{ign} linhas vazias ignoradas.")
+                    st.rerun()
+        for origem, n in importar.listar_origens():
+            c1, c2 = st.columns([4, 1])
+            c1.caption(f"📄 {origem} · {n} avarias")
+            if c2.button("🗑️", key=f"del_{origem}", help="Apagar esta importação"):
+                importar.apagar_origem(origem)
+                st.rerun()
 
     st.divider()
     if st.button("🗑️ Limpar conversa", use_container_width=True):
@@ -1295,6 +1880,89 @@ with st.sidebar:
         st.download_button("⬇️ Exportar CSV", feedback.exportar_csv(), "feedback.csv", "text/csv",
                            use_container_width=True)
 
+
+# ------------------------------------------------------------------ modo qualidade
+def _mostrar_resultado(r: dict, ia: bool = False):
+    c1, c2, c3 = st.columns(3)
+    if ia:
+        c1.metric("Cita a página certa", f"{r['hit'] * 100:.0f}%")
+        c2.metric("Palavras-chave na resposta", f"{r['mrr'] * 100:.0f}%")
+        c3.metric("Erros da API", r.get("erros", 0))
+    else:
+        c1.metric("Página certa nos trechos", f"{r['hit'] * 100:.0f}%")
+        c2.metric("Posição média (MRR, 1 = ótimo)", f"{r['mrr']:.2f}")
+        c3.metric("Casos medidos", r["n"])
+    st.dataframe(r["linhas"], use_container_width=True)
+
+
+def pagina_qualidade():
+    st.title("🧪 Qualidade das respostas")
+    st.caption("Registe avarias reais já resolvidas, com a página do manual onde está a pista. "
+               "Repita o teste antes e depois de cada mudança para ver se melhorou ou piorou.")
+    testes = avaliacao.listar_testes(nome_manual)
+    with st.expander("➕ Adicionar caso de teste", expanded=not testes):
+        with st.form("novo_teste", clear_on_submit=True):
+            sint = st.text_area("Sintoma, como o técnico escreveria", height=80,
+                                placeholder="ex.: contador de vapor zerado, o tear não conta")
+            causa = st.text_input("Causa real (o que era)")
+            pag = st.number_input("Página do manual onde está a pista (0 = não sei)", 0, manual.n_paginas, 0)
+            palavras = st.text_input("Palavras-chave da solução certa, separadas por vírgula (opcional)",
+                                     placeholder="ex.: sensor, X1.3, cabo")
+            eq = st.text_input("Equipamento (opcional)")
+            if st.form_submit_button("Guardar caso"):
+                if sint.strip():
+                    avaliacao.adicionar_teste(nome_manual, eq, sint, causa, pag, palavras)
+                    st.rerun()
+                else:
+                    st.warning("Escreva o sintoma.")
+    if not testes:
+        st.info("Ainda não há casos de teste para este manual. Comece com 10 a 15 avarias reais.")
+        return
+    st.markdown(f"**{len(testes)} casos de teste** neste manual")
+    st.dataframe([{"nº": t["id"], "sintoma": t["sintoma"], "causa real": t["causa_real"],
+                   "página certa": t["pagina_esperada"] or "—"} for t in testes], use_container_width=True)
+    with st.expander("🗑️ Apagar um caso"):
+        alvo = st.selectbox("Caso", [t["id"] for t in testes], format_func=lambda i: next(
+            f"{t['id']} – {t['sintoma'][:50]}" for t in testes if t["id"] == i))
+        if st.button("Apagar"):
+            avaliacao.apagar_teste(alvo)
+            st.rerun()
+
+    st.divider()
+    st.markdown("#### 1) Teste da pesquisa (grátis e instantâneo)")
+    if st.button("▶️ Testar pesquisa", use_container_width=True):
+        res = {"Só palavras": avaliacao.avaliar_recuperacao(indice, testes, config.TOP_CHUNKS_MANUAL, False)}
+        avaliacao.registar_execucao(nome_manual, "pesquisa: só palavras", res["Só palavras"])
+        if usar_semantica and indice.matriz is not None:
+            res["Palavras + significado"] = avaliacao.avaliar_recuperacao(
+                indice, testes, config.TOP_CHUNKS_MANUAL, True)
+            avaliacao.registar_execucao(nome_manual, "pesquisa: palavras + significado", res["Palavras + significado"])
+        st.session_state.res_pesquisa = res
+    for titulo, r in st.session_state.get("res_pesquisa", {}).items():
+        st.markdown(f"**{titulo}**")
+        _mostrar_resultado(r)
+
+    st.markdown("#### 2) Teste com a IA (usa a API: 1 pedido por caso)")
+    if st.button(f"▶️ Testar com a IA ({len(testes)} pedidos)", use_container_width=True, disabled=not ok_llm):
+        barra = st.progress(0.0, text="A testar...")
+        r = avaliacao.avaliar_com_ia(testes, manual, indice, base, usar_semantica, llm.gerar,
+                                     progresso=lambda a, b: barra.progress(a / b, text=f"{a}/{b}"))
+        barra.empty()
+        avaliacao.registar_execucao(nome_manual, "IA", r)
+        st.session_state.res_ia = r
+    if st.session_state.get("res_ia"):
+        _mostrar_resultado(st.session_state.res_ia, ia=True)
+
+    hist = avaliacao.listar_execucoes(nome_manual)
+    if hist:
+        st.markdown("#### Histórico de testes")
+        st.dataframe(hist, use_container_width=True)
+
+
+if modo == "🧪 Qualidade":
+    pagina_qualidade()
+    st.stop()
+
 # ------------------------------------------------------------------ estado da conversa
 if "mensagens" not in st.session_state or st.session_state.get("_manual_atual") != (utilizador, nome_manual):
     st.session_state._manual_atual = (utilizador, nome_manual)
@@ -1309,6 +1977,10 @@ def _ir_pagina(p: int):
 
 def _guardar():
     history.guardar(utilizador, nome_manual, mensagens)
+
+
+def _pouco_texto(p: int) -> bool:
+    return len(manual.textos[p - 1].split()) < 150
 
 
 pergunta = st.chat_input("Descreva o problema (ex.: 'erro -999 na sonda do tear 3; já medi a continuidade e está boa')")
@@ -1331,7 +2003,8 @@ with col_ver:
               disabled=st.session_state.pagina >= n, use_container_width=True)
     pag = st.session_state.pagina
     if pag in manual.paginas_sem_texto:
-        st.caption("Esta página não tem texto extraível (só desenho): a IA não a consegue ler, mas pode vê-la aqui.")
+        st.caption("Esta página não tem texto extraível (só desenho): "
+                   + ("a IA vê-a como imagem." if tem_gemini and modo_img != "Nunca" else "a IA não a consegue ler, mas pode vê-la aqui."))
     try:
         with st.spinner("A preparar a página..." + (" (a traduzir)" if traduzir else "")):
             dados, mime, blocos = _pagina_renderizada(
@@ -1357,6 +2030,8 @@ with col_chat:
                 continue
             if msg.get("aviso"):
                 st.warning(diagnosis.AVISO_SEGURANCA)
+            if msg.get("paginas_img"):
+                st.caption("👁️ A IA viu também como imagem: " + ", ".join(f"p.{p}" for p in msg["paginas_img"]))
             if msg.get("paginas"):
                 cols = st.columns(min(len(msg["paginas"]), 5) + 1)
                 cols[0].caption("Abrir:")
@@ -1402,14 +2077,38 @@ with col_chat:
             st.markdown(pergunta)
         hist_antes = list(mensagens)
         mensagens.append({"role": "user", "content": pergunta})
+        estado_img = {"paginas": []}
+
+        def escolher_imagens(trechos):
+            """Páginas com pouco texto (esquemas) entre a página em foco e as encontradas; máx. 2 imagens."""
+            if modo_img == "Nunca":
+                return [], []
+            foco = int(st.session_state.pagina)
+            ordem = [foco] + [ch.meta["pagina"] for ch, _ in trechos]
+            vistos, escolhidas = set(), []
+            for p in ordem:
+                if p in vistos:
+                    continue
+                vistos.add(p)
+                if (p == foco and modo_img == "Sempre") or _pouco_texto(p):
+                    escolhidas.append(p)
+                if len(escolhidas) >= 2:
+                    break
+            imgs, ok_pags = [], []
+            for p in escolhidas:
+                try:
+                    imgs.append(("image/png", _imagem_para_ia(str(manual.caminho), p)))
+                    ok_pags.append(p)
+                except Exception:
+                    pass
+            estado_img["paginas"] = ok_pags
+            return imgs, ok_pags
 
         with st.chat_message("assistant"):
             with st.spinner("A consultar o manual e os casos resolvidos..."):
-                consulta = diagnosis.reescrever_consulta(pergunta, hist_antes, usar_llm=reescrever and ok_llm)
-                trechos = indice.procurar(consulta, k=config.TOP_CHUNKS_MANUAL)
-                casos = base.procurar(consulta, equipamento, k=config.TOP_CASOS)
-            msgs = diagnosis.montar_mensagens(pergunta, hist_antes, trechos, casos, manual.nome,
-                                              equipamento, manual.idioma)
+                msgs, trechos, casos = diagnosis.preparar(
+                    pergunta, hist_antes, manual, indice, base, equipamento, semantica=usar_semantica,
+                    usar_llm_reescrita=reescrever and ok_llm, escolher_imagens=escolher_imagens)
             paginas_busca = []
             for ch, _ in trechos:
                 if ch.meta["pagina"] not in paginas_busca:
@@ -1432,11 +2131,13 @@ with col_chat:
 
             citadas = diagnosis.paginas_citadas(resposta, manual.n_paginas)
             paginas = citadas or paginas_busca[:3]
-            fb_id = None if erro or not resposta.strip() or resposta.startswith("⚠️") else feedback.registar_resposta(
+            falhou = bool(erro) or resposta.startswith("⚠️")
+            fb_id = None if falhou else feedback.registar_resposta(
                 utilizador, manual.nome, equipamento, pergunta, resposta, paginas, [c["id"] for c in casos_resumo])
             mensagens.append({
                 "role": "assistant", "content": resposta, "paginas": paginas, "casos": casos_resumo,
                 "fb_id": fb_id, "aviso": diagnosis.precisa_aviso_seguranca(resposta),
+                "paginas_img": estado_img["paginas"],
             })
             if paginas:   # aplicado no início da próxima execução (o widget já foi criado nesta)
                 st.session_state.pagina_pendente = paginas[0]
