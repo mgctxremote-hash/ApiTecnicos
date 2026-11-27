@@ -1768,115 +1768,15 @@ import streamlit.components.v1 as components
 from core import (auth, avaliacao, casos as mod_casos, config, diagnosis, embeddings, feedback, history,
                   importar, llm, pdf_store, textutil, translate, viewer)
 
-st.set_page_config(page_title="Assistente MGC", page_icon="⚡", layout="wide", initial_sidebar_state="auto")
+st.set_page_config(page_title="Assistente MGC", page_icon="⚡", layout="wide")
 
 st.markdown("""
 <style>
-/* ===== MOBILE RESPONSIVE ===== */
-@media (max-width: 768px) {
-  /* Stack columns vertically on mobile */
-  .stHorizontalBlock, .stColumns {
-    flex-direction: column !important;
-  }
-  .stHorizontalBlock > div, .stColumns > div {
-    width: 100% !important;
-    min-width: 0 !important;
-  }
-  
-  /* Chat input full width on mobile */
-  [data-testid="stChatInput"] {
-    width: 100% !important;
-  }
-  [data-testid="stChatInput"] > div {
-    width: 100% !important;
-  }
-  
-  /* Viewer height responsive */
-  #wrap {
-    height: 400px !important;
-  }
-  
-  /* Sidebar spacing */
-  section[data-testid="stSidebar"] {
-    padding-top: 1rem !important;
-  }
-  
-  /* Reduce padding on mobile */
-  .block-container {
-    padding-top: 1rem !important;
-    padding-bottom: 1rem !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-  }
-  
-  /* Chat messages more compact */
-  div[data-testid="stChatMessage"] {
-    padding: 0.75rem !important;
-    margin-bottom: 0.5rem !important;
-  }
-  
-  /* Buttons full width on mobile */
-  .stButton > button {
-    width: 100% !important;
-  }
-  
-  /* Number input compact */
-  .stNumberInput > div > div > input {
-    padding: 0.5rem !important;
-  }
-  
-  /* Expander more compact */
-  .streamlit-expanderHeader {
-    padding: 0.5rem 0.75rem !important;
-  }
-}
-
-/* ===== BASE STYLES ===== */
-.stApp {
-  background: #050810;
-  background-image: radial-gradient(circle at top right, #0a1128 0%, #050810 100%);
-  color: #e2e8f0;
-}
-
-section[data-testid="stSidebar"] {
-  background: rgba(10, 15, 30, .9);
-  border-right: 1px solid rgba(56, 189, 248, .2);
-}
-
-h1, h2, h3 {
-  color: #38bdf8 !important;
-}
-
-div[data-testid="stChatMessage"] {
-  background: rgba(30, 41, 59, .65);
-  border: 1px solid rgba(255, 255, 255, .05);
-  border-radius: 12px;
-}
-
-.stButton button {
-  border-radius: 8px;
-  font-weight: 600;
-}
-
-/* Viewer container responsive */
-.viewer-container {
-  width: 100%;
-  min-height: 300px;
-}
-
-/* Ensure horizontal container wraps properly */
-.stHorizontalBlock {
-  gap: 1rem;
-}
-
-/* Chat input submit mode for better UX */
-[data-testid="stChatInput"] {
-  position: sticky;
-  bottom: 0;
-  background: inherit;
-  padding-top: 0.5rem;
-  z-index: 100;
-}
+ .stApp{background:#050810;background-image:radial-gradient(circle at top right,#0a1128 0%,#050810 100%);color:#e2e8f0}
+ section[data-testid="stSidebar"]{background:rgba(10,15,30,.9);border-right:1px solid rgba(56,189,248,.2)}
+ h1,h2,h3{color:#38bdf8!important}
+ div[data-testid="stChatMessage"]{background:rgba(30,41,59,.65);border:1px solid rgba(255,255,255,.05);border-radius:12px}
+ .stButton button{border-radius:8px;font-weight:600}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1893,18 +1793,17 @@ if "utilizador" not in st.session_state:
     st.session_state.utilizador = auth.validar_token(token) if token else None
 
 if not st.session_state.utilizador:
-    # Login page responsiva
-    with st.container(horizontal_alignment="center"):
-        st.markdown("# ⚡ Assistente MGC")
-        st.caption("Apoio ao diagnóstico de avarias")
-        
-        with st.form("login", border=True):
+    st.markdown("<h1 style='text-align:center'>⚡ Assistente MGC</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center;color:#94a3b8'>Apoio ao diagnóstico de avarias</p>", unsafe_allow_html=True)
+    _, centro, _ = st.columns([1, 2, 1])
+    with centro:
+        with st.form("login"):
             if config.LISTA_TECNICOS:
                 nome = st.selectbox("Técnico", config.LISTA_TECNICOS)
             else:
                 nome = st.text_input("Nome do técnico")
             pin = st.text_input("PIN de acesso", type="password")
-            if st.form_submit_button("Entrar", use_container_width=True, type="primary"):
+            if st.form_submit_button("Entrar", use_container_width=True):
                 ok, msg = auth.verificar_login(nome, pin)
                 if ok:
                     st.session_state.utilizador = nome.strip()
@@ -2064,11 +1963,11 @@ with st.sidebar:
                                                 f"{ign} linhas vazias ignoradas.")
                     st.rerun()
         for origem, n in importar.listar_origens():
-            with st.container(horizontal=True, horizontal_alignment="space-between", gap="small"):
-                st.caption(f"📄 {origem} · {n} avarias")
-                if st.button("🗑️", key=f"del_{origem}", help="Apagar esta importação", use_container_width=False):
-                    importar.apagar_origem(origem)
-                    st.rerun()
+            c1, c2 = st.columns([4, 1])
+            c1.caption(f"📄 {origem} · {n} avarias")
+            if c2.button("🗑️", key=f"del_{origem}", help="Apagar esta importação"):
+                importar.apagar_origem(origem)
+                st.rerun()
 
     st.divider()
     if st.button("🗑️ Limpar conversa", use_container_width=True):
@@ -2091,16 +1990,15 @@ with st.sidebar:
 
 # ------------------------------------------------------------------ modo qualidade
 def _mostrar_resultado(r: dict, ia: bool = False):
-    # Métricas em container horizontal responsivo
-    with st.container(horizontal=True, horizontal_alignment="distribute", gap="small"):
-        if ia:
-            st.metric("Cita a página certa", f"{r['hit'] * 100:.0f}%")
-            st.metric("Palavras-chave na resposta", f"{r['mrr'] * 100:.0f}%")
-            st.metric("Erros da API", r.get("erros", 0))
-        else:
-            st.metric("Página certa nos trechos", f"{r['hit'] * 100:.0f}%")
-            st.metric("Posição média (MRR, 1 = ótimo)", f"{r['mrr']:.2f}")
-            st.metric("Casos medidos", r["n"])
+    c1, c2, c3 = st.columns(3)
+    if ia:
+        c1.metric("Cita a página certa", f"{r['hit'] * 100:.0f}%")
+        c2.metric("Palavras-chave na resposta", f"{r['mrr'] * 100:.0f}%")
+        c3.metric("Erros da API", r.get("erros", 0))
+    else:
+        c1.metric("Página certa nos trechos", f"{r['hit'] * 100:.0f}%")
+        c2.metric("Posição média (MRR, 1 = ótimo)", f"{r['mrr']:.2f}")
+        c3.metric("Casos medidos", r["n"])
     st.dataframe(r["linhas"], use_container_width=True)
 
 
@@ -2193,111 +2091,76 @@ def _pouco_texto(p: int) -> bool:
     return len(manual.textos[p - 1].split()) < 150
 
 
-pergunta = st.chat_input(
-    "Descreva o problema (ex.: 'erro -999 na sonda do tear 3; já medi a continuidade e está boa')",
-    submit_mode="disable"  # Disable input while response is streaming
-)
+pergunta = st.chat_input("Descreva o problema (ex.: 'erro -999 na sonda do tear 3; já medi a continuidade e está boa')")
 
-# Layout responsivo: usa container horizontal que empilha no mobile
-# No desktop: chat à esquerda, esquema à direita
-# No mobile: empilha verticalmente (chat em cima, esquema embaixo)
-with st.container(horizontal=True, horizontal_alignment="distribute", gap="medium") as layout_cols:
-    # Painel esquerdo: Chat (Diagnóstico)
-    with st.container(border=True):
-        st.subheader("💬 Diagnóstico")
-        st.caption("O assistente apenas **sugere**. Valide sempre no esquema e siga o procedimento de segurança.")
-        
-        for i, msg in enumerate(mensagens):
-            with st.chat_message(msg["role"]):
-                if msg["role"] == "assistant" and msg.get("busca"):
-                    st.caption(msg["busca"])
-                st.markdown(msg["content"])
-                if msg["role"] != "assistant":
-                    continue
-                if msg.get("info"):
-                    st.caption(msg["info"])
-                if msg.get("aviso"):
-                    st.warning(diagnosis.AVISO_SEGURANCA)
-                if msg.get("paginas_img"):
-                    st.caption("👁️ A IA viu também como imagem: " + ", ".join(f"p.{p}" for p in msg["paginas_img"]))
-                if msg.get("paginas"):
-                    # Botões de página responsivos
-                    paginas_mostrar = msg["paginas"][:5]
-                    cols_pag = st.columns(len(paginas_mostrar) + 1)
-                    cols_pag[0].caption("Abrir:")
-                    for c, p in zip(cols_pag[1:], paginas_mostrar):
-                        c.button(f"📄 p.{p}", key=f"pg_{i}_{p}", on_click=_ir_pagina, args=(p,), use_container_width=True)
-                if msg.get("casos"):
-                    with st.expander(f"📚 {len(msg['casos'])} casos parecidos já resolvidos"):
-                        for c in msg["casos"]:
-                            st.markdown(f"**{c['id']}** · {c['data']} · {c['equipamento']}  \n"
-                                        f"Avaria: {c['avaria']}  \nCausa: {c['causa'] or '—'}  \n"
-                                        f"Solução: {c['solucao'] or '—'}")
-                # --- feedback
-                if msg.get("fb_id"):
-                    if msg.get("avaliacao"):
-                        rot = {"resolveu": "✅ resolveu", "parcial": "🟡 ajudou em parte", "nao_resolveu": "❌ não resolveu"}
-                        st.caption(f"Avaliação: {rot[msg['avaliacao']]}")
-                    else:
-                        pend = st.session_state.get("fb_pendente")
-                        if pend and pend[0] == i:
-                            with st.form(f"fbf_{i}"):
-                                st.markdown("**O que foi realmente?** (ajuda os colegas e melhora o sistema)")
-                                causa = st.text_input("Causa real", key=f"causa_{i}")
-                                solucao = st.text_area("O que fez para resolver", key=f"sol_{i}", height=80)
-                                ok = st.form_submit_button("Guardar avaliação", use_container_width=True)
-                                if ok:
-                                    feedback.avaliar(msg["fb_id"], pend[1], causa, solucao)
-                                    msg["avaliacao"] = pend[1]
-                                    st.session_state.pop("fb_pendente", None)
-                                    _guardar()
-                                    st.rerun()
-                        else:
-                            b1, b2, b3 = st.columns(3)
-                            for col, (res, rot) in zip((b1, b2, b3), (("resolveu", "✅ Resolveu"),
-                                                                  ("parcial", "🟡 Em parte"),
-                                                                  ("nao_resolveu", "❌ Não resolveu"))):
-                                if col.button(rot, key=f"fb_{res}_{i}", use_container_width=True):
-                                    st.session_state.fb_pendente = (i, res)
-                                    st.rerun()
+col_chat, col_ver = st.columns([5, 6], gap="medium")
 
-    # Painel direito: Esquema / Manual
-    with st.container(border=True):
-        st.subheader("📐 Esquema / Manual")
-        
-        # Navegação de página responsiva
-        n = manual.n_paginas
-        st.session_state.pagina = min(max(int(st.session_state.get("pagina", 1)), 1), n)
-        c1, c2, c3 = st.columns([1, 2, 1], vertical_alignment="center")
-        c1.button("⬅️", on_click=_ir_pagina, args=(st.session_state.pagina - 1,),
-                  disabled=st.session_state.pagina <= 1, use_container_width=True)
-        c2.number_input("Página", 1, n, key="pagina", label_visibility="collapsed")
-        c3.button("➡️", on_click=_ir_pagina, args=(st.session_state.pagina + 1,),
-                  disabled=st.session_state.pagina >= n, use_container_width=True)
-        
-        pag = st.session_state.pagina
-        if pag in manual.paginas_sem_texto:
-            st.caption("Esta página não tem texto extraível (só desenho): "
-                       + ("a IA vê-a como imagem." if tem_gemini and modo_img != "Nunca" else "a IA não a consegue ler, mas pode vê-la aqui."))
-        try:
-            with st.spinner("A preparar a página..." + (" (a traduzir)" if traduzir else "")):
-                dados, mime, blocos = _pagina_renderizada(
-                    str(manual.caminho), manual.hash, pag, config.ZOOM_RENDER, formato,
-                    bool(traduzir and pode_traduzir), manual.idioma, config.LLM_PROVIDER)
-            
-            # Altura responsiva do viewer: 640px desktop, 400px mobile (via CSS)
-            viewer_height = 640
-            components.html(viewer.html_visualizador(dados, mime, viewer_height), height=viewer_height + 10)
-            
-            if blocos:
-                with st.expander("Texto traduzido desta página"):
-                    for b in blocos:
-                        st.markdown(f"- {b['texto']}  →  **{b.get('traducao', '')}**")
-        except Exception as e:
-            st.error(f"Não consegui mostrar a página: {e}")
+# ------------------------------------------------------------------ painel direito: esquema
+if "pagina_pendente" in st.session_state:
+    st.session_state.pagina = st.session_state.pop("pagina_pendente")
 
-    # --------------------------------------------------------------- nova pergunta
-    if pergunta:
+with col_ver:
+    st.subheader("📐 Esquema / Manual")
+    n = manual.n_paginas
+    st.session_state.pagina = min(max(int(st.session_state.get("pagina", 1)), 1), n)
+    c1, c2, c3 = st.columns([1, 2, 1])
+    c1.button("⬅️", on_click=_ir_pagina, args=(st.session_state.pagina - 1,),
+              disabled=st.session_state.pagina <= 1, use_container_width=True)
+    c2.number_input("Página", 1, n, key="pagina", label_visibility="collapsed")
+    c3.button("➡️", on_click=_ir_pagina, args=(st.session_state.pagina + 1,),
+              disabled=st.session_state.pagina >= n, use_container_width=True)
+    pag = st.session_state.pagina
+    if pag in manual.paginas_sem_texto:
+        st.caption("Esta página não tem texto extraível (só desenho): "
+                   + ("a IA vê-a como imagem." if tem_gemini and modo_img != "Nunca" else "a IA não a consegue ler, mas pode vê-la aqui."))
+    try:
+        with st.spinner("A preparar a página..." + (" (a traduzir)" if traduzir else "")):
+            dados, mime, blocos = _pagina_renderizada(
+                str(manual.caminho), manual.hash, pag, config.ZOOM_RENDER, formato,
+                bool(traduzir and pode_traduzir), manual.idioma, config.LLM_PROVIDER)
+        components.html(viewer.html_visualizador(dados, mime, 640), height=650)
+        if blocos:
+            with st.expander("Texto traduzido desta página"):
+                for b in blocos:
+                    st.markdown(f"- {b['texto']}  →  **{b.get('traducao', '')}**")
+    except Exception as e:
+        st.error(f"Não consegui mostrar a página: {e}")
+
+# ------------------------------------------------------------------ painel esquerdo: conversa
+with col_chat:
+    st.subheader("💬 Diagnóstico")
+    st.caption("O assistente apenas **sugere**. Valide sempre no esquema e siga o procedimento de segurança.")
+
+    for i, msg in enumerate(mensagens):
+        with st.chat_message(msg["role"]):
+            if msg["role"] == "assistant" and msg.get("busca"):
+                st.caption(msg["busca"])
+            st.markdown(msg["content"])
+            if msg["role"] != "assistant":
+                continue
+            if msg.get("info"):
+                st.caption(msg["info"])
+            if msg.get("aviso"):
+                st.warning(diagnosis.AVISO_SEGURANCA)
+            if msg.get("paginas_img"):
+                st.caption("👁️ A IA viu também como imagem: " + ", ".join(f"p.{p}" for p in msg["paginas_img"]))
+            if msg.get("paginas"):
+                cols = st.columns(min(len(msg["paginas"]), 5) + 1)
+                cols[0].caption("Abrir:")
+                for c, p in zip(cols[1:], msg["paginas"][:5]):
+                    c.button(f"📄 p.{p}", key=f"pg_{i}_{p}", on_click=_ir_pagina, args=(p,))
+            if msg.get("casos"):
+                with st.expander(f"📚 {len(msg['casos'])} casos parecidos já resolvidos"):
+                    for c in msg["casos"]:
+                        st.markdown(f"**{c['id']}** · {c['data']} · {c['equipamento']}  \n"
+                                    f"Avaria: {c['avaria']}  \nCausa: {c['causa'] or '—'}  \n"
+                                    f"Solução: {c['solucao'] or '—'}")
+            # --- feedback
+            if msg.get("fb_id"):
+                if msg.get("avaliacao"):
+                    rot = {"resolveu": "✅ resolveu", "parcial": "🟡 ajudou em parte", "nao_resolveu": "❌ não resolveu"}
+                    st.caption(f"Avaliação: {rot[msg['avaliacao']]}")
+                else:
                     pend = st.session_state.get("fb_pendente")
                     if pend and pend[0] == i:
                         with st.form(f"fbf_{i}"):
