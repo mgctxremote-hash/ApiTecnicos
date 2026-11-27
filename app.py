@@ -195,6 +195,7 @@ GLOSSARIO = {
     "reset": ["reset", "ruecksetzen"],
 }
 
+
 GLOSSARIO.update({
     "malha": ["shield", "schirm", "knit", "masche"],
     "contador": ["counter", "zaehler"],
@@ -1406,24 +1407,16 @@ def renderizar_pagina(pdf_path, pagina: int, zoom: float = 3.0, blocos_traduzido
 
 _TEMPLATE = """
 <style>
-  html,body{margin:0;height:100%;background:#0b1020;font-family:Segoe UI,Roboto,sans-serif}
-  #wrap{position:relative;width:100%;height:__ALTURA__px;overflow:hidden;background:#fff;border:1px solid #334155;
-        border-radius:8px;cursor:grab;touch-action:none}
-  #wrap.arrasta{cursor:grabbing}
-  #img{position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;-webkit-user-drag:none;max-width:none}
-  #bar{position:absolute;top:8px;right:8px;display:flex;gap:6px;z-index:5;flex-wrap:wrap}
-  #bar button{background:#0284c7;color:#fff;border:0;border-radius:6px;padding:10px 14px;font-size:16px;cursor:pointer;min-width:44px;min-height:44px}
-  #bar button:hover{background:#0ea5e9}
-  #bar button:active{background:#0369a1}
-  #dica{position:absolute;left:8px;bottom:6px;font-size:12px;color:#475569;background:rgba(255,255,255,.8);
-        padding:2px 6px;border-radius:4px}
-  
-  /* Mobile touch improvements */
-  @media (max-width: 768px) {
-    #bar{top:4px;right:4px;gap:4px}
-    #bar button{padding:12px 16px;font-size:18px;min-width:48px;min-height:48px}
-    #dica{font-size:11px;padding:4px 8px;left:4px;bottom:4px}
-  }
+ html,body{margin:0;height:100%;background:#0b1020;font-family:Segoe UI,Roboto,sans-serif}
+ #wrap{position:relative;width:100%;height:__ALTURA__px;overflow:hidden;background:#fff;border:1px solid #334155;
+       border-radius:8px;cursor:grab;touch-action:none}
+ #wrap.arrasta{cursor:grabbing}
+ #img{position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;-webkit-user-drag:none;max-width:none}
+ #bar{position:absolute;top:8px;right:8px;display:flex;gap:6px;z-index:5}
+ #bar button{background:#0284c7;color:#fff;border:0;border-radius:6px;padding:6px 10px;font-size:15px;cursor:pointer}
+ #bar button:hover{background:#0ea5e9}
+ #dica{position:absolute;left:8px;bottom:6px;font-size:12px;color:#475569;background:rgba(255,255,255,.8);
+       padding:2px 6px;border-radius:4px}
 </style>
 <div id="wrap">
   <div id="bar"><button id="mais" title="Aproximar">＋</button><button id="menos" title="Afastar">－</button>
@@ -1433,27 +1426,27 @@ _TEMPLATE = """
 </div>
 <script>
 (function(){
-  const w=document.getElementById('wrap'), im=document.getElementById('img');
-  let s=1,x=0,y=0,drag=false,sx=0,sy=0;
-  function ap(){im.style.transform='translate('+x+'px,'+y+'px) scale('+s+')';}
-  function ajusta(){const iw=im.naturalWidth||1, ih=im.naturalHeight||1;
-    s=Math.min(w.clientWidth/iw,w.clientHeight/ih); x=(w.clientWidth-iw*s)/2; y=(w.clientHeight-ih*s)/2; ap();}
-  function zoomEm(f,cx,cy){const n=Math.min(Math.max(s*f,0.02),60); const k=n/s;
-    x=cx-(cx-x)*k; y=cy-(cy-y)*k; s=n; ap();}
-  im.onload=ajusta; if(im.complete) ajusta();
-  w.addEventListener('wheel',e=>{e.preventDefault();const r=w.getBoundingClientRect();
-    zoomEm(e.deltaY<0?1.2:1/1.2,e.clientX-r.left,e.clientY-r.top);},{passive:false});
-  w.addEventListener('pointerdown',e=>{if(e.target.closest('#bar'))return;drag=true;sx=e.clientX-x;sy=e.clientY-y;
-    w.classList.add('arrasta');w.setPointerCapture(e.pointerId);});
-  w.addEventListener('pointermove',e=>{if(!drag)return;x=e.clientX-sx;y=e.clientY-sy;ap();});
-  w.addEventListener('pointerup',()=>{drag=false;w.classList.remove('arrasta');});
-  w.addEventListener('dblclick',ajusta);
-  document.getElementById('mais').onclick=()=>zoomEm(1.4,w.clientWidth/2,w.clientHeight/2);
-  document.getElementById('menos').onclick=()=>zoomEm(1/1.4,w.clientWidth/2,w.clientHeight/2);
-  document.getElementById('ajusta').onclick=ajusta;
-  document.getElementById('cheio').onclick=()=>{ if(document.fullscreenElement){document.exitFullscreen();}
-    else{w.requestFullscreen&&w.requestFullscreen();} setTimeout(ajusta,250);};
-  window.addEventListener('resize',ajusta);
+ const w=document.getElementById('wrap'), im=document.getElementById('img');
+ let s=1,x=0,y=0,drag=false,sx=0,sy=0;
+ function ap(){im.style.transform='translate('+x+'px,'+y+'px) scale('+s+')';}
+ function ajusta(){const iw=im.naturalWidth||1, ih=im.naturalHeight||1;
+   s=Math.min(w.clientWidth/iw,w.clientHeight/ih); x=(w.clientWidth-iw*s)/2; y=(w.clientHeight-ih*s)/2; ap();}
+ function zoomEm(f,cx,cy){const n=Math.min(Math.max(s*f,0.02),60); const k=n/s;
+   x=cx-(cx-x)*k; y=cy-(cy-y)*k; s=n; ap();}
+ im.onload=ajusta; if(im.complete) ajusta();
+ w.addEventListener('wheel',e=>{e.preventDefault();const r=w.getBoundingClientRect();
+   zoomEm(e.deltaY<0?1.2:1/1.2,e.clientX-r.left,e.clientY-r.top);},{passive:false});
+ w.addEventListener('pointerdown',e=>{if(e.target.closest('#bar'))return;drag=true;sx=e.clientX-x;sy=e.clientY-y;
+   w.classList.add('arrasta');w.setPointerCapture(e.pointerId);});
+ w.addEventListener('pointermove',e=>{if(!drag)return;x=e.clientX-sx;y=e.clientY-sy;ap();});
+ w.addEventListener('pointerup',()=>{drag=false;w.classList.remove('arrasta');});
+ w.addEventListener('dblclick',ajusta);
+ document.getElementById('mais').onclick=()=>zoomEm(1.4,w.clientWidth/2,w.clientHeight/2);
+ document.getElementById('menos').onclick=()=>zoomEm(1/1.4,w.clientWidth/2,w.clientHeight/2);
+ document.getElementById('ajusta').onclick=ajusta;
+ document.getElementById('cheio').onclick=()=>{ if(document.fullscreenElement){document.exitFullscreen();}
+   else{w.requestFullscreen&&w.requestFullscreen();} setTimeout(ajusta,250);};
+ window.addEventListener('resize',ajusta);
 })();
 </script>
 """
@@ -1566,7 +1559,7 @@ def _ja_e_autonoma(pergunta: str) -> bool:
 
 
 def reescrever_consulta(pergunta: str, historico: list[dict], usar_llm: bool = False) -> str:
-    """'E agora?' sozinho não pesquisa nada. Por defeito junta as últimas perguntas do técnico (instantâneo, grátis).
+    """'E agora?' sozinho não pesquisa nada. Por defeito junta as últimas perguntas (instantâneo, grátis).
     Só chama a IA se usar_llm=True e a pergunta for curta/dependente do contexto."""
     if not historico or _ja_e_autonoma(pergunta):
         return pergunta
@@ -2206,7 +2199,7 @@ pergunta = st.chat_input(
 )
 
 # Layout responsivo: usa container horizontal que empilha no mobile
-# No desktop: chat à esquerda (5/11), esquema à direita (6/11)
+# No desktop: chat à esquerda, esquema à direita
 # No mobile: empilha verticalmente (chat em cima, esquema embaixo)
 with st.container(horizontal=True, horizontal_alignment="distribute", gap="medium") as layout_cols:
     # Painel esquerdo: Chat (Diagnóstico)
@@ -2303,87 +2296,111 @@ with st.container(horizontal=True, horizontal_alignment="distribute", gap="mediu
         except Exception as e:
             st.error(f"Não consegui mostrar a página: {e}")
 
-# --------------------------------------------------------------- nova pergunta
-if pergunta:
-    with st.chat_message("user"):
-        st.markdown(pergunta)
-    hist_antes = list(mensagens)
-    mensagens.append({"role": "user", "content": pergunta})
-    estado_img = {"paginas": []}
+    # --------------------------------------------------------------- nova pergunta
+    if pergunta:
+                    pend = st.session_state.get("fb_pendente")
+                    if pend and pend[0] == i:
+                        with st.form(f"fbf_{i}"):
+                            st.markdown("**O que foi realmente?** (ajuda os colegas e melhora o sistema)")
+                            causa = st.text_input("Causa real", key=f"causa_{i}")
+                            solucao = st.text_area("O que fez para resolver", key=f"sol_{i}", height=80)
+                            ok = st.form_submit_button("Guardar avaliação")
+                            if ok:
+                                feedback.avaliar(msg["fb_id"], pend[1], causa, solucao)
+                                msg["avaliacao"] = pend[1]
+                                st.session_state.pop("fb_pendente", None)
+                                _guardar()
+                                st.rerun()
+                    else:
+                        b1, b2, b3 = st.columns(3)
+                        for col, (res, rot) in zip((b1, b2, b3), (("resolveu", "✅ Resolveu"),
+                                                                 ("parcial", "🟡 Em parte"),
+                                                                 ("nao_resolveu", "❌ Não resolveu"))):
+                            if col.button(rot, key=f"fb_{res}_{i}", use_container_width=True):
+                                st.session_state.fb_pendente = (i, res)
+                                st.rerun()
 
-    def escolher_imagens(trechos):
-        """A IA lê a imagem da melhor página encontrada (e de páginas só com esquema); máx. 2."""
-        paginas = diagnosis.escolher_paginas_imagem(int(st.session_state.pagina), trechos, manual.textos, modo_img)
-        imgs, ok_pags = [], []
-        for p in paginas:
+    # --------------------------------------------------------------- nova pergunta
+    if pergunta:
+        with st.chat_message("user"):
+            st.markdown(pergunta)
+        hist_antes = list(mensagens)
+        mensagens.append({"role": "user", "content": pergunta})
+        estado_img = {"paginas": []}
+
+        def escolher_imagens(trechos):
+            """A IA lê a imagem da melhor página encontrada (e de páginas só com esquema); máx. 2."""
+            paginas = diagnosis.escolher_paginas_imagem(int(st.session_state.pagina), trechos, manual.textos, modo_img)
+            imgs, ok_pags = [], []
+            for p in paginas:
+                try:
+                    imgs.append(("image/png", _imagem_para_ia(str(manual.caminho), p)))
+                    ok_pags.append(p)
+                except Exception:
+                    pass
+            estado_img["paginas"] = ok_pags
+            return imgs, ok_pags
+
+        with st.chat_message("assistant"):
+            t0 = time.time()
+            with st.spinner("A ver as palavras da pergunta e a procurar no manual..."):
+                msgs, trechos, casos = diagnosis.preparar(
+                    pergunta, hist_antes, manual, indice, base, equipamento, semantica=usar_semantica,
+                    usar_llm_reescrita=reescrever and ok_llm, escolher_imagens=escolher_imagens)
+            t_busca = time.time() - t0
+            paginas_busca = []
+            for ch, _ in trechos:
+                if ch.meta["pagina"] not in paginas_busca:
+                    paginas_busca.append(ch.meta["pagina"])
+            palavras, extra = textutil.palavras_chave(pergunta)
+            busca_txt = ("🔎 Procurei: " + " · ".join(palavras)
+                         + (f"  (+ {', '.join(extra)})" if extra else "")
+                         + (" → encontrei nas páginas " + ", ".join(f"p.{p}" for p in paginas_busca[:4])
+                            if paginas_busca else " → nada encontrado no manual"))
+            st.caption(busca_txt)
+            casos_resumo = [{"id": c.id, "data": c.data,
+                             "equipamento": c.equipamento, "avaria": c.avaria, "causa": c.causa,
+                             "solucao": c.solucao} for c, _ in casos]
+            t_llm = time.time()
+            marcas = {}
+
+            def _fluxo():
+                for parte in llm.gerar_stream(msgs, modelo=modelo_sel):
+                    marcas.setdefault("primeira", time.time() - t_llm)
+                    yield parte
+
             try:
-                imgs.append(("image/png", _imagem_para_ia(str(manual.caminho), p)))
-                ok_pags.append(p)
-            except Exception:
-                pass
-        estado_img["paginas"] = ok_pags
-        return imgs, ok_pags
+                resposta = st.write_stream(_fluxo())
+                erro = None
+            except llm.LLMErro as e:
+                resposta, erro = "", str(e)
 
-    with st.chat_message("assistant"):
-        t0 = time.time()
-        with st.spinner("A ver as palavras da pergunta e a procurar no manual..."):
-            msgs, trechos, casos = diagnosis.preparar(
-                pergunta, hist_antes, manual, indice, base, equipamento, semantica=usar_semantica,
-                usar_llm_reescrita=reescrever and ok_llm, escolher_imagens=escolher_imagens)
-        t_busca = time.time() - t0
-        paginas_busca = []
-        for ch, _ in trechos:
-            if ch.meta["pagina"] not in paginas_busca:
-                paginas_busca.append(ch.meta["pagina"])
-        palavras, extra = textutil.palavras_chave(pergunta)
-        busca_txt = ("🔎 Procurei: " + " · ".join(palavras)
-                     + (f"  (+ {', '.join(extra)})" if extra else "")
-                     + (" → encontrei nas páginas " + ", ".join(f"p.{p}" for p in paginas_busca[:4])
-                        if paginas_busca else " → nada encontrado no manual"))
-        st.caption(busca_txt)
-        casos_resumo = [{"id": c.id, "data": c.data,
-                         "equipamento": c.equipamento, "avaria": c.avaria, "causa": c.causa,
-                         "solucao": c.solucao} for c, _ in casos]
-        t_llm = time.time()
-        marcas = {}
+            if erro or not resposta.strip():
+                excertos = "\n\n".join(
+                    f"**[Manual p.{c.meta['pagina']}]** {c.texto[:400]}…" for c, _ in trechos[:3]) or "(nada encontrado no manual)"
+                resposta = ("⚠️ A IA está temporariamente indisponível (" + (erro or "resposta vazia")[:160] + "). "
+                            "Tente de novo daqui a alguns segundos. Entretanto, isto é o que encontrei no manual:\n\n" + excertos)
+                st.markdown(resposta)
 
-        def _fluxo():
-            for parte in llm.gerar_stream(msgs, modelo=modelo_sel):
-                marcas.setdefault("primeira", time.time() - t_llm)
-                yield parte
-
-        try:
-            resposta = st.write_stream(_fluxo())
-            erro = None
-        except llm.LLMErro as e:
-            resposta, erro = "", str(e)
-
-        if erro or not resposta.strip():
-            excertos = "\n\n".join(
-                f"**[Manual p.{c.meta['pagina']}]** {c.texto[:400]}…" for c, _ in trechos[:3]) or "(nada encontrado no manual)"
-            resposta = ("⚠️ A IA está temporariamente indisponível (" + (erro or "resposta vazia")[:160] + "). "
-                        "Tente de novo daqui a alguns segundos. Entretanto, isto é o que encontrei no manual:\n\n" + excertos)
-            st.markdown(resposta)
-
-        t_total = t_busca + (time.time() - t_llm)
-        info = f"⏱ pesquisa {t_busca:.1f}s · 1.ª palavra {marcas.get('primeira', 0) + t_busca:.1f}s · total {t_total:.1f}s"
-        info_llm = llm.ultimo_info() or {}
-        if info_llm.get("modelo"):
-            info += f" · {info_llm['modelo']}" + (f" (depois de {info_llm['falhas']} falhas)" if info_llm.get("falhas") else "")
-        if estado_img["paginas"]:
-            info += f" · {len(estado_img['paginas'])} imagem(ns)"
-        st.caption(info)
-        citadas = diagnosis.paginas_citadas(resposta, manual.n_paginas)
-        paginas = citadas or paginas_busca[:3]
-        falhou = bool(erro) or resposta.startswith("⚠️")
-        fb_id = None if falhou else feedback.registar_resposta(
-            utilizador, manual.nome, equipamento, pergunta, resposta, paginas, [c["id"] for c in casos_resumo])
-        mensagens.append({
-            "role": "assistant", "content": resposta, "paginas": paginas, "casos": casos_resumo,
-            "fb_id": fb_id, "aviso": diagnosis.precisa_aviso_seguranca(resposta),
-            "paginas_img": estado_img["paginas"], "busca": busca_txt, "info": info,
-        })
-        if paginas:   # aplicado no início da próxima execução (o widget já foi criado nesta)
-            st.session_state.pagina_pendente = paginas[0]
-        _guardar()
-    st.rerun()
+            t_total = t_busca + (time.time() - t_llm)
+            info = f"⏱ pesquisa {t_busca:.1f}s · 1.ª palavra {marcas.get('primeira', 0) + t_busca:.1f}s · total {t_total:.1f}s"
+            info_llm = llm.ultimo_info() or {}
+            if info_llm.get("modelo"):
+                info += f" · {info_llm['modelo']}" + (f" (depois de {info_llm['falhas']} falhas)" if info_llm.get("falhas") else "")
+            if estado_img["paginas"]:
+                info += f" · {len(estado_img['paginas'])} imagem(ns)"
+            st.caption(info)
+            citadas = diagnosis.paginas_citadas(resposta, manual.n_paginas)
+            paginas = citadas or paginas_busca[:3]
+            falhou = bool(erro) or resposta.startswith("⚠️")
+            fb_id = None if falhou else feedback.registar_resposta(
+                utilizador, manual.nome, equipamento, pergunta, resposta, paginas, [c["id"] for c in casos_resumo])
+            mensagens.append({
+                "role": "assistant", "content": resposta, "paginas": paginas, "casos": casos_resumo,
+                "fb_id": fb_id, "aviso": diagnosis.precisa_aviso_seguranca(resposta),
+                "paginas_img": estado_img["paginas"], "busca": busca_txt, "info": info,
+            })
+            if paginas:   # aplicado no início da próxima execução (o widget já foi criado nesta)
+                st.session_state.pagina_pendente = paginas[0]
+            _guardar()
+        st.rerun()
