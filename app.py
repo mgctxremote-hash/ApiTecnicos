@@ -464,7 +464,7 @@ _FONTES['llm'] = r'''
 - ollama: modelo local (defeito). Sem chave, sem internet, dados ficam na empresa.
 - gemini: API opcional. ATENÇÃO à privacidade: ver README (tier gratuito usa os dados).
 """
-from __future__ = annotations
+from __future__ import annotations
 
 import base64
 import json
