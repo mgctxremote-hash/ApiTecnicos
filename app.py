@@ -115,7 +115,7 @@ ZOOM_RENDER = float(obter("ZOOM_RENDER", "3.0"))
 # ----------------------- core/textutil.py -----------------------
 _FONTES['textutil'] = r'''
 """Utilitários de texto: normalização, tokenização, glossário técnico PT <-> EN/DE."""
-from __future__ = annotations
+from __future__ import annotations
 
 import re
 import unicodedata
@@ -364,7 +364,7 @@ def nome_seguro(utilizador: str) -> str:
 # ----------------------- core/search.py -----------------------
 _FONTES['search'] = r'''
 """Pesquisa BM25 em Python puro (sem dependências), sobre chunks com metadados."""
-from __future__ = annotations
+from __future__ import annotations
 
 import math
 import re
@@ -646,7 +646,7 @@ Os vetores de cada manual calculam-se UMA vez e ficam em data/cache. Se a API fa
 continua só com BM25 (palavras). A fusão (Reciprocal Rank Fusion) junta as duas listas sem afinar pesos.
 O modelo é multilingue: uma pergunta em português encontra texto de manuais em inglês ou alemão.
 """
-from __future__ = annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -800,7 +800,7 @@ class IndiceHibrido(Indice):
 # ----------------------- core/casos.py -----------------------
 _FONTES['casos'] = r'''
 """Base de casos de avarias: histórico importado (Excel) + casos validados pelos técnicos."""
-from __future__ = annotations
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 
@@ -853,7 +853,7 @@ _FONTES['feedback'] = r'''
 
 Os casos marcados como "resolveu" com solução real alimentam a pesquisa como casos validados.
 """
-from __future__ = annotations
+from __future__ import annotations
 
 import csv
 import io
@@ -984,7 +984,7 @@ _FONTES['importar'] = r'''
 
 Só LÊ o ficheiro carregado e guarda uma cópia em SQLite. Não liga ao Manwinwin.
 """
-from __future__ = annotations
+from __future__ import annotations
 
 import hashlib
 import io
@@ -1133,7 +1133,7 @@ def apagar_origem(origem: str) -> int:
 # ----------------------- core/history.py -----------------------
 _FONTES['history'] = r'''
 """Histórico de conversa por utilizador e por manual (ficheiros separados, escrita atómica)."""
-from __future__ = annotations
+from __future__ import annotations
 
 import json
 import os
@@ -1186,7 +1186,7 @@ _FONTES['pdf_store'] = r'''
 
 `fitz` só é importado dentro das funções, para o resto do projeto poder ser testado sem ele.
 """
-from __future__ = annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -1267,7 +1267,7 @@ Estratégia:
   3. guarda em cache (por manual+página);
   4. desenha a tradução sobre a página SEM apagar linhas/símbolos (redação só de texto, sem fundo branco).
 """
-from __future__ = annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -1384,7 +1384,7 @@ _FONTES['viewer'] = r'''
 Não precisa de bibliotecas no PC do técnico: corre no browser. Aceita PNG ou SVG (vetorial,
 nítido em qualquer zoom).
 """
-from __future__ = annotations
+from __future__ import annotations
 
 import base64
 
@@ -1472,7 +1472,7 @@ _FONTES['diagnosis'] = r'''
 Princípio: o sistema SUGERE, nunca ordena. Só afirma o que está nas fontes (manual, casos
 resolvidos) ou rotula como conhecimento geral a confirmar.
 """
-from __future__ = annotations
+from __future__ import annotations
 
 import re
 
@@ -1650,7 +1650,7 @@ Dois testes:
   - pesquisa (grátis, instantâneo): a página certa aparece nos trechos encontrados?
   - com IA (usa a API): a resposta cita a página certa e menciona as palavras-chave da solução?
 """
-from __future__ = annotations
+from __future__ import annotations
 
 import json
 import time
