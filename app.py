@@ -115,7 +115,7 @@ ZOOM_RENDER = float(obter("ZOOM_RENDER", "3.0"))
 # ----------------------- core/textutil.py -----------------------
 _FONTES['textutil'] = r'''
 """Utilitários de texto: normalização, tokenização, glossário técnico PT <-> EN/DE."""
-from __future__ import annotations
+from __future__ = annotations
 
 import re
 import unicodedata
@@ -194,7 +194,6 @@ GLOSSARIO = {
     "profibus": ["profibus"],
     "reset": ["reset", "ruecksetzen"],
 }
-
 
 GLOSSARIO.update({
     "malha": ["shield", "schirm", "knit", "masche"],
@@ -365,7 +364,7 @@ def nome_seguro(utilizador: str) -> str:
 # ----------------------- core/search.py -----------------------
 _FONTES['search'] = r'''
 """Pesquisa BM25 em Python puro (sem dependências), sobre chunks com metadados."""
-from __future__ import annotations
+from __future__ = annotations
 
 import math
 import re
@@ -465,7 +464,7 @@ _FONTES['llm'] = r'''
 - ollama: modelo local (defeito). Sem chave, sem internet, dados ficam na empresa.
 - gemini: API opcional. ATENÇÃO à privacidade: ver README (tier gratuito usa os dados).
 """
-from __future__ import annotations
+from __future__ = annotations
 
 import base64
 import json
@@ -647,7 +646,7 @@ Os vetores de cada manual calculam-se UMA vez e ficam em data/cache. Se a API fa
 continua só com BM25 (palavras). A fusão (Reciprocal Rank Fusion) junta as duas listas sem afinar pesos.
 O modelo é multilingue: uma pergunta em português encontra texto de manuais em inglês ou alemão.
 """
-from __future__ import annotations
+from __future__ = annotations
 
 import hashlib
 import json
@@ -801,7 +800,7 @@ class IndiceHibrido(Indice):
 # ----------------------- core/casos.py -----------------------
 _FONTES['casos'] = r'''
 """Base de casos de avarias: histórico importado (Excel) + casos validados pelos técnicos."""
-from __future__ import annotations
+from __future__ = annotations
 
 from dataclasses import dataclass, field
 
@@ -854,7 +853,7 @@ _FONTES['feedback'] = r'''
 
 Os casos marcados como "resolveu" com solução real alimentam a pesquisa como casos validados.
 """
-from __future__ import annotations
+from __future__ = annotations
 
 import csv
 import io
@@ -985,7 +984,7 @@ _FONTES['importar'] = r'''
 
 Só LÊ o ficheiro carregado e guarda uma cópia em SQLite. Não liga ao Manwinwin.
 """
-from __future__ import annotations
+from __future__ = annotations
 
 import hashlib
 import io
@@ -1134,7 +1133,7 @@ def apagar_origem(origem: str) -> int:
 # ----------------------- core/history.py -----------------------
 _FONTES['history'] = r'''
 """Histórico de conversa por utilizador e por manual (ficheiros separados, escrita atómica)."""
-from __future__ import annotations
+from __future__ = annotations
 
 import json
 import os
@@ -1187,7 +1186,7 @@ _FONTES['pdf_store'] = r'''
 
 `fitz` só é importado dentro das funções, para o resto do projeto poder ser testado sem ele.
 """
-from __future__ import annotations
+from __future__ = annotations
 
 import hashlib
 import json
@@ -1268,7 +1267,7 @@ Estratégia:
   3. guarda em cache (por manual+página);
   4. desenha a tradução sobre a página SEM apagar linhas/símbolos (redação só de texto, sem fundo branco).
 """
-from __future__ import annotations
+from __future__ = annotations
 
 import hashlib
 import json
@@ -1385,7 +1384,7 @@ _FONTES['viewer'] = r'''
 Não precisa de bibliotecas no PC do técnico: corre no browser. Aceita PNG ou SVG (vetorial,
 nítido em qualquer zoom).
 """
-from __future__ import annotations
+from __future__ = annotations
 
 import base64
 
@@ -1407,46 +1406,55 @@ def renderizar_pagina(pdf_path, pagina: int, zoom: float = 3.0, blocos_traduzido
 
 _TEMPLATE = """
 <style>
- html,body{margin:0;height:100%;background:#0b1020;font-family:Segoe UI,Roboto,sans-serif}
- #wrap{position:relative;width:100%;height:__ALTURA__px;overflow:hidden;background:#fff;border:1px solid #334155;
-       border-radius:8px;cursor:grab;touch-action:none}
- #wrap.arrasta{cursor:grabbing}
- #img{position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;-webkit-user-drag:none;max-width:none}
- #bar{position:absolute;top:8px;right:8px;display:flex;gap:6px;z-index:5}
- #bar button{background:#0284c7;color:#fff;border:0;border-radius:6px;padding:6px 10px;font-size:15px;cursor:pointer}
- #bar button:hover{background:#0ea5e9}
- #dica{position:absolute;left:8px;bottom:6px;font-size:12px;color:#475569;background:rgba(255,255,255,.8);
-       padding:2px 6px;border-radius:4px}
+  html,body{margin:0;height:100%;background:#050810;font-family:'JetBrains Mono',monospace}
+  #wrap{position:relative;width:100%;height:__ALTURA__px;overflow:hidden;background:#0a0f1a;border:1px solid #1e3a5f;
+        border-radius:12px;cursor:grab;touch-action:none;box-shadow:0 0 30px rgba(0,212,255,0.1),inset 0 0 60px rgba(0,212,255,0.02)}
+  #wrap.arrasta{cursor:grabbing}
+  #img{position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;-webkit-user-drag:none;max-width:none;filter:contrast(1.05)}
+  #bar{position:absolute;top:10px;right:10px;display:flex;gap:8px;z-index:5;flex-wrap:wrap}
+  #bar button{background:linear-gradient(135deg,#006d9e 0%,#004d7a 100%);color:#e0f7ff;border:1px solid #00d4ff33;border-radius:10px;padding:12px 16px;font-size:16px;cursor:pointer;min-width:48px;min-height:48px;transition:all 0.2s;box-shadow:0 2px 8px rgba(0,0,0,0.3),0 0 0 1px rgba(0,212,255,0.1) inset}
+  #bar button:hover{background:linear-gradient(135deg,#00d4ff 0%,#0099cc 100%);color:#050810;transform:scale(1.05);box-shadow:0 0 20px rgba(0,212,255,0.4),0 0 0 1px rgba(0,212,255,0.3) inset}
+  #bar button:active{transform:scale(0.98)}
+  #dica{position:absolute;left:10px;bottom:10px;font-size:11px;color:#00d4ff88;background:rgba(5,8,16,0.9);border:1px solid #00d4ff22;
+        padding:6px 12px;border-radius:8px;backdrop-filter:blur(10px);font-family:'Inter',sans-serif}
+  @media (max-width: 768px) {
+    #bar{top:6px;right:6px;gap:6px}
+    #bar button{padding:14px 18px;font-size:18px;min-width:52px;min-height:52px}
+    #dica{font-size:10px;padding:5px 10px;left:6px;bottom:6px}
+  }
 </style>
 <div id="wrap">
   <div id="bar"><button id="mais" title="Aproximar">＋</button><button id="menos" title="Afastar">－</button>
-  <button id="ajusta" title="Ajustar ao ecrã">⤢</button><button id="cheio" title="Ecrã inteiro">⛶</button></div>
+  <button id="ajusta" title="Ajustar ao ecrã">⛶</button><button id="cheio" title="Ecrã inteiro">⛶</button></div>
   <img id="img" src="data:__MIME__;base64,__B64__" draggable="false">
-  <div id="dica">Roda do rato = zoom · Arrastar = mover · Duplo clique = ajustar</div>
+  <div id="dica">Roda/duplo-toque = zoom · Arrastar = mover · Duplo clique = ajustar</div>
 </div>
 <script>
 (function(){
- const w=document.getElementById('wrap'), im=document.getElementById('img');
- let s=1,x=0,y=0,drag=false,sx=0,sy=0;
- function ap(){im.style.transform='translate('+x+'px,'+y+'px) scale('+s+')';}
- function ajusta(){const iw=im.naturalWidth||1, ih=im.naturalHeight||1;
-   s=Math.min(w.clientWidth/iw,w.clientHeight/ih); x=(w.clientWidth-iw*s)/2; y=(w.clientHeight-ih*s)/2; ap();}
- function zoomEm(f,cx,cy){const n=Math.min(Math.max(s*f,0.02),60); const k=n/s;
-   x=cx-(cx-x)*k; y=cy-(cy-y)*k; s=n; ap();}
- im.onload=ajusta; if(im.complete) ajusta();
- w.addEventListener('wheel',e=>{e.preventDefault();const r=w.getBoundingClientRect();
-   zoomEm(e.deltaY<0?1.2:1/1.2,e.clientX-r.left,e.clientY-r.top);},{passive:false});
- w.addEventListener('pointerdown',e=>{if(e.target.closest('#bar'))return;drag=true;sx=e.clientX-x;sy=e.clientY-y;
-   w.classList.add('arrasta');w.setPointerCapture(e.pointerId);});
- w.addEventListener('pointermove',e=>{if(!drag)return;x=e.clientX-sx;y=e.clientY-sy;ap();});
- w.addEventListener('pointerup',()=>{drag=false;w.classList.remove('arrasta');});
- w.addEventListener('dblclick',ajusta);
- document.getElementById('mais').onclick=()=>zoomEm(1.4,w.clientWidth/2,w.clientHeight/2);
- document.getElementById('menos').onclick=()=>zoomEm(1/1.4,w.clientWidth/2,w.clientHeight/2);
- document.getElementById('ajusta').onclick=ajusta;
- document.getElementById('cheio').onclick=()=>{ if(document.fullscreenElement){document.exitFullscreen();}
-   else{w.requestFullscreen&&w.requestFullscreen();} setTimeout(ajusta,250);};
- window.addEventListener('resize',ajusta);
+  const w=document.getElementById('wrap'), im=document.getElementById('img');
+  let s=1,x=0,y=0,drag=false,sx=0,sy=0,lastTouch=0;
+  function ap(){im.style.transform='translate('+x+'px,'+y+'px) scale('+s+')';}
+  function ajusta(){const iw=im.naturalWidth||1, ih=im.naturalHeight||1;
+    s=Math.min(w.clientWidth/iw,w.clientHeight/ih)*0.95; x=(w.clientWidth-iw*s)/2; y=(w.clientHeight-ih*s)/2; ap();}
+  function zoomEm(f,cx,cy){const n=Math.min(Math.max(s*f,0.02),80); const k=n/s;
+    x=cx-(cx-x)*k; y=cy-(cy-y)*k; s=n; ap();}
+  im.onload=ajusta; if(im.complete) ajusta();
+  w.addEventListener('wheel',e=>{e.preventDefault();const r=w.getBoundingClientRect();
+    zoomEm(e.deltaY<0?1.15:1/1.15,e.clientX-r.left,e.clientY-r.top);},{passive:false});
+  w.addEventListener('pointerdown',e=>{if(e.target.closest('#bar'))return;drag=true;sx=e.clientX-x;sy=e.clientY-y;
+    w.classList.add('arrasta');w.setPointerCapture(e.pointerId);});
+  w.addEventListener('pointermove',e=>{if(!drag)return;x=e.clientX-sx;y=e.clientY-sy;ap();});
+  w.addEventListener('pointerup',()=>{drag=false;w.classList.remove('arrasta');});
+  w.addEventListener('dblclick',ajusta);
+  // Touch pinch zoom
+  w.addEventListener('touchstart',e=>{if(e.touches.length===2){lastTouch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);}},{passive:true});
+  w.addEventListener('touchmove',e=>{if(e.touches.length===2){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);if(lastTouch){zoomEm(d/lastTouch,w.clientWidth/2,w.clientHeight/2);}lastTouch=d;e.preventDefault();}},{passive:false});
+  document.getElementById('mais').onclick=()=>zoomEm(1.3,w.clientWidth/2,w.clientHeight/2);
+  document.getElementById('menos').onclick=()=>zoomEm(1/1.3,w.clientWidth/2,w.clientHeight/2);
+  document.getElementById('ajusta').onclick=ajusta;
+  document.getElementById('cheio').onclick=()=>{ if(document.fullscreenElement){document.exitFullscreen();}
+    else{w.requestFullscreen&&w.requestFullscreen();} setTimeout(ajusta,250);};
+  window.addEventListener('resize',ajusta);
 })();
 </script>
 """
@@ -1464,7 +1472,7 @@ _FONTES['diagnosis'] = r'''
 Princípio: o sistema SUGERE, nunca ordena. Só afirma o que está nas fontes (manual, casos
 resolvidos) ou rotula como conhecimento geral a confirmar.
 """
-from __future__ import annotations
+from __future__ = annotations
 
 import re
 
@@ -1559,7 +1567,7 @@ def _ja_e_autonoma(pergunta: str) -> bool:
 
 
 def reescrever_consulta(pergunta: str, historico: list[dict], usar_llm: bool = False) -> str:
-    """'E agora?' sozinho não pesquisa nada. Por defeito junta as últimas perguntas (instantâneo, grátis).
+    """'E agora?' sozinho não pesquisa nada. Por defeito junta as últimas perguntas do técnico (instantâneo, grátis).
     Só chama a IA se usar_llm=True e a pergunta for curta/dependente do contexto."""
     if not historico or _ja_e_autonoma(pergunta):
         return pergunta
@@ -1642,7 +1650,7 @@ Dois testes:
   - pesquisa (grátis, instantâneo): a página certa aparece nos trechos encontrados?
   - com IA (usa a API): a resposta cita a página certa e menciona as palavras-chave da solução?
 """
-from __future__ import annotations
+from __future__ = annotations
 
 import json
 import time
@@ -1758,7 +1766,7 @@ for _n in _ORDEM:
     setattr(_pkg, _n, _m)
     exec(compile(_FONTES[_n], "core/" + _n + ".py", "exec"), _m.__dict__)
 
-# ======================= APLICACAO =======================
+# ======================= APLICAÇÃO =======================
 import time
 from pathlib import Path
 
@@ -1768,13 +1776,317 @@ import streamlit.components.v1 as components
 from core import (auth, avaliacao, casos as mod_casos, config, diagnosis, embeddings, feedback, history,
                   importar, llm, pdf_store, textutil, translate, viewer)
 
-st.set_page_config(page_title="Assistente MGC", page_icon="⚡", layout="wide", initial_sidebar_state="auto")
+st.set_page_config(
+    page_title="Assistente MGC",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="auto",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': "Assistente MGC v2.0 - Diagnóstico Inteligente de Avarias"
+    }
+)
 
+# ===== TEMA FUTURISTA =====
 st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-/* ===== MOBILE RESPONSIVE ===== */
+:root {
+  --bg-deep: #030610;
+  --bg-card: #080e1a;
+  --bg-elevated: #0c1426;
+  --border-glow: #00d4ff33;
+  --border-bright: #00d4ff66;
+  --accent-cyan: #00d4ff;
+  --accent-dim: #00d4ff88;
+  --accent-bright: #00ffff;
+  --text-primary: #e8f4fd;
+  --text-secondary: #8fb3cc;
+  --text-muted: #5a7a9a;
+  --success: #00ff88;
+  --warning: #ffaa00;
+  --danger: #ff4466;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-glow: 0 0 30px rgba(0,212,255,0.15);
+  --shadow-card: 0 4px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(0,212,255,0.05);
+  --shadow-hover: 0 8px 40px rgba(0,212,255,0.2), 0 0 0 1px rgba(0,212,255,0.15);
+  --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stApp {
+  background: var(--bg-deep);
+  background-image: 
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0,212,255,0.08) 0%, transparent 50%),
+    radial-gradient(circle at 100% 100%, rgba(0,100,200,0.06) 0%, transparent 40%),
+    linear-gradient(180deg, #030610 0%, #050a18 100%);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Sidebar futurista */
+section[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-deep) 100%) !important;
+  border-right: 1px solid var(--border-glow) !important;
+  backdrop-filter: blur(20px);
+}
+
+section[data-testid="stSidebar"] > div {
+  padding-top: 1.5rem;
+}
+
+/* Headers */
+h1, h2, h3, h4 {
+  color: var(--accent-cyan) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em;
+}
+
+h1 { font-size: 1.75rem; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.1rem; }
+
+/* Cards com glassmorphism */
+[data-testid="stChatMessage"] {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-glow) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-card);
+  margin-bottom: 0.75rem !important;
+  padding: 1rem 1.25rem !important;
+  transition: var(--transition);
+}
+
+[data-testid="stChatMessage"]:hover {
+  border-color: var(--border-bright);
+  box-shadow: var(--shadow-hover);
+}
+
+[data-testid="stChatMessage"][data-testid*="user"] {
+  border-left: 3px solid var(--accent-cyan);
+}
+
+[data-testid="stChatMessage"][data-testid*="assistant"] {
+  border-left: 3px solid var(--success);
+}
+
+/* Botões futuristas */
+.stButton > button {
+  background: linear-gradient(135deg, #005a8a 0%, #003d5e 100%) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-glow) !important;
+  border-radius: var(--radius-sm) !important;
+  font-weight: 500 !important;
+  font-family: 'Inter', sans-serif !important;
+  padding: 0.6rem 1.2rem !important;
+  transition: var(--transition) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
+}
+
+.stButton > button:hover {
+  background: linear-gradient(135deg, var(--accent-cyan) 0%, #0099cc 100%) !important;
+  color: var(--bg-deep) !important;
+  border-color: var(--accent-cyan) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: var(--shadow-hover) !important;
+}
+
+.stButton > button:active {
+  transform: translateY(0) !important;
+}
+
+.stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, var(--accent-cyan) 0%, #0099cc 100%) !important;
+  color: var(--bg-deep) !important;
+  border: none !important;
+}
+
+.stButton > button[kind="primary"]:hover {
+  background: linear-gradient(135deg, var(--accent-bright) 0%, var(--accent-cyan) 100%) !important;
+  box-shadow: 0 0 25px rgba(0,212,255,0.5) !important;
+}
+
+/* Inputs */
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stSelectbox > div > div,
+.stTextArea > div > div > textarea {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-glow) !important;
+  border-radius: var(--radius-sm) !important;
+  color: var(--text-primary) !important;
+  font-family: 'Inter', sans-serif !important;
+  transition: var(--transition) !important;
+}
+
+.stTextInput > div > div > input:focus,
+.stNumberInput > div > div > input:focus,
+.stSelectbox > div > div:focus-within,
+.stTextArea > div > div > textarea:focus {
+  border-color: var(--accent-cyan) !important;
+  box-shadow: 0 0 0 3px rgba(0,212,255,0.15) !important;
+  outline: none !important;
+}
+
+/* Chat Input */
+[data-testid="stChatInput"] {
+  background: transparent !important;
+  border-top: 1px solid var(--border-glow) !important;
+  padding-top: 1rem !important;
+  margin-top: 1rem !important;
+}
+
+[data-testid="stChatInput"] > div {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-bright) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-glow) !important;
+}
+
+[data-testid="stChatInput"] textarea {
+  background: transparent !important;
+  color: var(--text-primary) !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 1rem !important;
+}
+
+/* Metrics */
+[data-testid="stMetric"] {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-glow) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 1rem !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+[data-testid="stMetric"] > div:first-child {
+  color: var(--text-secondary) !important;
+  font-weight: 500 !important;
+  font-size: 0.85rem !important;
+}
+
+[data-testid="stMetric"] [data-testid="stMetricValue"] {
+  color: var(--accent-cyan) !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-weight: 600 !important;
+}
+
+/* Expander */
+.streamlit-expanderHeader {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-glow) !important;
+  border-radius: var(--radius-sm) !important;
+  color: var(--text-primary) !important;
+  font-weight: 500 !important;
+  padding: 0.75rem 1rem !important;
+}
+
+.streamlit-expanderContent {
+  background: var(--bg-deep) !important;
+  border: 1px solid var(--border-glow) !important;
+  border-top: none !important;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm) !important;
+  padding: 1rem !important;
+}
+
+/* Dataframes */
+[data-testid="stDataFrame"] {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-glow) !important;
+  border-radius: var(--radius-md) !important;
+  overflow: hidden !important;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+  gap: 4px;
+  background: var(--bg-card) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 4px !important;
+  border: 1px solid var(--border-glow) !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  border-radius: var(--radius-sm) !important;
+  padding: 0.6rem 1.2rem !important;
+  font-weight: 500 !important;
+  transition: var(--transition) !important;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+  color: var(--accent-cyan) !important;
+  background: rgba(0,212,255,0.08) !important;
+}
+
+.stTabs [aria-selected="true"] {
+  background: linear-gradient(135deg, var(--accent-cyan) 0%, #0099cc 100%) !important;
+  color: var(--bg-deep) !important;
+  box-shadow: 0 2px 12px rgba(0,212,255,0.3) !important;
+}
+
+/* Radio / Checkbox */
+.stRadio > div, .stCheckbox > div {
+  gap: 0.5rem !important;
+}
+
+.stRadio label, .stCheckbox label {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-glow) !important;
+  border-radius: var(--radius-sm) !important;
+  padding: 0.5rem 1rem !important;
+  transition: var(--transition) !important;
+  cursor: pointer !important;
+}
+
+.stRadio label:hover, .stCheckbox label:hover {
+  border-color: var(--accent-cyan) !important;
+  background: rgba(0,212,255,0.05) !important;
+}
+
+.stRadio input:checked + div, .stCheckbox input:checked + div {
+  border-color: var(--accent-cyan) !important;
+  background: rgba(0,212,255,0.1) !important;
+}
+
+/* Progress bar */
+.stProgress > div > div > div {
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-bright)) !important;
+  border-radius: 4px !important;
+}
+
+/* File uploader */
+[data-testid="stFileUploader"] {
+  background: var(--bg-card) !important;
+  border: 2px dashed var(--border-glow) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 2rem !important;
+}
+
+[data-testid="stFileUploader"]:hover {
+  border-color: var(--accent-cyan) !important;
+  background: rgba(0,212,255,0.03) !important;
+}
+
+/* Selectbox options */
+.stSelectbox [data-baseweb="popover"] {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-bright) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-hover) !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-deep); }
+::-webkit-scrollbar-thumb { background: linear-gradient(180deg, var(--accent-dim), var(--accent-cyan)); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-bright); }
+
+/* MOBILE RESPONSIVE */
 @media (max-width: 768px) {
-  /* Stack columns vertically on mobile */
   .stHorizontalBlock, .stColumns {
     flex-direction: column !important;
   }
@@ -1783,100 +2095,55 @@ st.markdown("""
     min-width: 0 !important;
   }
   
-  /* Chat input full width on mobile */
-  [data-testid="stChatInput"] {
-    width: 100% !important;
-  }
-  [data-testid="stChatInput"] > div {
-    width: 100% !important;
-  }
+  [data-testid="stChatInput"] { width: 100% !important; }
+  [data-testid="stChatInput"] > div { width: 100% !important; }
   
-  /* Viewer height responsive */
-  #wrap {
-    height: 400px !important;
-  }
+  #wrap { height: 380px !important; }
   
-  /* Sidebar spacing */
-  section[data-testid="stSidebar"] {
-    padding-top: 1rem !important;
-  }
+  section[data-testid="stSidebar"] { padding-top: 1rem !important; }
   
-  /* Reduce padding on mobile */
   .block-container {
     padding-top: 1rem !important;
     padding-bottom: 1rem !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
   }
   
-  /* Chat messages more compact */
-  div[data-testid="stChatMessage"] {
-    padding: 0.75rem !important;
+  [data-testid="stChatMessage"] {
+    padding: 0.85rem !important;
     margin-bottom: 0.5rem !important;
   }
   
-  /* Buttons full width on mobile */
-  .stButton > button {
-    width: 100% !important;
-  }
+  .stButton > button { width: 100% !important; }
   
-  /* Number input compact */
-  .stNumberInput > div > div > input {
-    padding: 0.5rem !important;
-  }
+  .stNumberInput > div > div > input { padding: 0.6rem !important; }
   
-  /* Expander more compact */
-  .streamlit-expanderHeader {
-    padding: 0.5rem 0.75rem !important;
-  }
+  .streamlit-expanderHeader { padding: 0.6rem 0.85rem !important; }
+  
+  h1 { font-size: 1.5rem !important; }
+  h2 { font-size: 1.2rem !important; }
+  h3 { font-size: 1rem !important; }
 }
 
-/* ===== BASE STYLES ===== */
-.stApp {
-  background: #050810;
-  background-image: radial-gradient(circle at top right, #0a1128 0%, #050810 100%);
-  color: #e2e8f0;
+/* Container horizontal responsivo */
+.stHorizontalBlock { gap: 1rem !important; }
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(0,212,255,0.3); }
+  50% { box-shadow: 0 0 40px rgba(0,212,255,0.5); }
 }
 
-section[data-testid="stSidebar"] {
-  background: rgba(10, 15, 30, .9);
-  border-right: 1px solid rgba(56, 189, 248, .2);
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-h1, h2, h3 {
-  color: #38bdf8 !important;
-}
+[data-testid="stChatMessage"] { animation: fade-in-up 0.3s ease-out; }
 
-div[data-testid="stChatMessage"] {
-  background: rgba(30, 41, 59, .65);
-  border: 1px solid rgba(255, 255, 255, .05);
-  border-radius: 12px;
-}
-
-.stButton button {
-  border-radius: 8px;
-  font-weight: 600;
-}
-
-/* Viewer container responsive */
-.viewer-container {
-  width: 100%;
-  min-height: 300px;
-}
-
-/* Ensure horizontal container wraps properly */
-.stHorizontalBlock {
-  gap: 1rem;
-}
-
-/* Chat input submit mode for better UX */
-[data-testid="stChatInput"] {
-  position: sticky;
-  bottom: 0;
-  background: inherit;
-  padding-top: 0.5rem;
-  z-index: 100;
-}
+/* Loading skeleton */
+.skeleton { background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-elevated) 50%, var(--bg-card) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: var(--radius-sm); }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1893,17 +2160,23 @@ if "utilizador" not in st.session_state:
     st.session_state.utilizador = auth.validar_token(token) if token else None
 
 if not st.session_state.utilizador:
-    # Login page responsiva
-    with st.container(horizontal_alignment="center"):
-        st.markdown("# ⚡ Assistente MGC")
-        st.caption("Apoio ao diagnóstico de avarias")
+    # Login page futurista
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("""
+        <div style="text-align:center;padding:2rem 0;">
+          <div style="font-size:3rem;margin-bottom:0.5rem;">⚡</div>
+          <h1 style="margin-bottom:0.25rem;">Assistente MGC</h1>
+          <p style="color:var(--text-secondary);font-size:1rem;">Diagnóstico Inteligente de Avarias</p>
+        </div>
+        """, unsafe_allow_html=True)
         
         with st.form("login", border=True):
             if config.LISTA_TECNICOS:
-                nome = st.selectbox("Técnico", config.LISTA_TECNICOS)
+                nome = st.selectbox("👤 Técnico", config.LISTA_TECNICOS)
             else:
-                nome = st.text_input("Nome do técnico")
-            pin = st.text_input("PIN de acesso", type="password")
+                nome = st.text_input("👤 Nome do técnico")
+            pin = st.text_input("🔐 PIN de acesso", type="password")
             if st.form_submit_button("Entrar", use_container_width=True, type="primary"):
                 ok, msg = auth.verificar_login(nome, pin)
                 if ok:
@@ -1915,7 +2188,6 @@ if not st.session_state.utilizador:
     st.stop()
 
 utilizador: str = st.session_state.utilizador
-
 
 # ------------------------------------------------------------------ recursos em cache
 @st.cache_resource(show_spinner="A ler o manual...")
@@ -1954,53 +2226,91 @@ def _estado_llm(_chave: int):
 
 # ------------------------------------------------------------------ barra lateral
 with st.sidebar:
-    st.markdown(f"### 👤 {utilizador}")
+    # Header do sidebar
+    st.markdown(f"""
+    <div style="padding:0.5rem 0 1.5rem 0;border-bottom:1px solid var(--border-glow);margin-bottom:1rem;">
+      <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;">
+        <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--accent-cyan),#0099cc);display:flex;align-items:center;justify-content:center;font-size:1.25rem;">⚡</div>
+        <div>
+          <div style="font-weight:600;color:var(--text-primary);">{utilizador}</div>
+          <div style="font-size:0.75rem;color:var(--text-muted);">Técnico de Manutenção</div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
     modo = st.radio("Modo", ["💬 Diagnóstico", "🧪 Qualidade"], horizontal=True, label_visibility="collapsed")
+    
     manuais = pdf_store.listar_manuais()
 
-    with st.expander("➕ Adicionar manual (PDF)"):
-        up = st.file_uploader("Ficheiro PDF", type="pdf", key="upload_pdf")
+    with st.expander("➕ Adicionar Manual (PDF)", expanded=False):
+        up = st.file_uploader("Ficheiro PDF", type="pdf", key="upload_pdf", label_visibility="collapsed")
         if up is not None:
             destino = config.PASTA_MANUAIS / Path(up.name).name
             if not destino.exists():
                 destino.write_bytes(up.getbuffer())
-                st.success("Manual guardado.")
+                st.success("✅ Manual guardado com sucesso")
                 st.rerun()
             else:
-                st.info("Já existe um manual com esse nome.")
+                st.info("ℹ️ Já existe um manual com esse nome")
 
     if not manuais:
-        st.warning("Sem manuais. Adicione um PDF acima ou copie para a pasta 'manuais'.")
+        st.warning("⚠️ Sem manuais. Adicione um PDF acima ou copie para a pasta 'manuais'.")
         st.stop()
 
-    nome_manual = st.selectbox("📚 Manual da máquina", list(manuais.keys()))
+    nome_manual = st.selectbox("📚 Manual da Máquina", list(manuais.keys()))
     manual, indice = _abrir_manual(str(manuais[nome_manual]), manuais[nome_manual].stat().st_mtime)
 
     base = _base_casos(_assinatura_casos())
-    equip_sel = st.text_input("🏭 Equipamento / máquina", placeholder="ex.: Tear 3",
+    equip_sel = st.text_input("🏭 Equipamento / Máquina", placeholder="ex.: Tear 3",
                               help="Opcional. Fica registado nos casos resolvidos e melhora a pesquisa.")
     equipamento = equip_sel.strip() or None
 
-    st.caption(f"Manual: {manual.n_paginas} págs · idioma detetado: **{manual.idioma}**")
+    # Info cards no sidebar
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown(f"""
+        <div style="background:var(--bg-card);border:1px solid var(--border-glow);border-radius:var(--radius-sm);padding:0.75rem;text-align:center;">
+          <div style="font-size:1.25rem;font-weight:700;color:var(--accent-cyan);font-family:'JetBrains Mono',monospace;">{manual.n_paginas}</div>
+          <div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;">Páginas</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_b:
+        st.markdown(f"""
+        <div style="background:var(--bg-card);border:1px solid var(--border-glow);border-radius:var(--radius-sm);padding:0.75rem;text-align:center;">
+          <div style="font-size:1.25rem;font-weight:700;color:var(--success);font-family:'JetBrains Mono',monospace;">{manual.idioma.upper()}</div>
+          <div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;">Idioma</div>
+        </div>
+        """, unsafe_allow_html=True)
+
     if manual.paginas_sem_texto:
-        st.caption(f"{len(manual.paginas_sem_texto)} págs sem texto pesquisável (só desenho).")
+        st.caption(f"📄 {len(manual.paginas_sem_texto)} págs só com desenho")
     n_imp = importar.contar()
-    st.caption(f"Casos: {n_imp} importados · {len(base.casos) - n_imp} validados pelos técnicos")
+    st.caption(f"📊 {n_imp} importados · {len(base.casos) - n_imp} validados")
 
+    st.divider()
+    
+    # Status LLM
     ok_llm, msg_llm = _estado_llm(0)
-    (st.success if ok_llm else st.error)("🧠 " + msg_llm)
+    status_color = "var(--success)" if ok_llm else "var(--danger)"
+    st.markdown(f"""
+    <div style="display:flex;align-items:center;gap:0.5rem;padding:0.75rem;background:var(--bg-card);border:1px solid var(--border-glow);border-radius:var(--radius-sm);">
+      <div style="width:10px;height:10px;border-radius:50%;background:{status_color};box-shadow:0 0 10px {status_color};"></div>
+      <div style="font-size:0.85rem;color:var(--text-secondary);">{msg_llm}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # ---- pesquisa por significado (embeddings) e imagens dos esquemas: só com Gemini
+    # ---- Inteligência ----
     tem_gemini = config.LLM_PROVIDER == "gemini" and bool(config.GEMINI_API_KEY)
     st.divider()
-    st.markdown("**Inteligência**")
-    usar_semantica = st.checkbox("🔎 Pesquisa por significado (mais precisa)", value=tem_gemini and not manual.idioma.startswith("pt"),
+    st.markdown("**🧠 Inteligência**")
+    
+    usar_semantica = st.checkbox("🔎 Pesquisa por significado", value=tem_gemini and not manual.idioma.startswith("pt"),
                                  disabled=not tem_gemini,
-                                 help="Junta à pesquisa por palavras uma pesquisa por significado (embeddings do Gemini). "
-                                      "Útil quando o manual está noutro idioma. Por defeito só liga se o manual não estiver em português.")
+                                 help="Embeddings Gemini para pesquisa semântica multilíngue")
     chave_falha = f"emb_falhou_{manual.hash}"
     if usar_semantica and indice.matriz is None and not st.session_state.get(chave_falha):
-        barra = st.progress(0.0, text="A preparar a pesquisa por significado (só na 1.ª vez)...")
+        barra = st.progress(0.0, text="A preparar pesquisa semântica...")
         try:
             indice.matriz = embeddings.obter_matriz(
                 manual.hash, indice.chunks, lambda a, b: barra.progress(a / b, text=f"A preparar... {a}/{b}"))
@@ -2008,42 +2318,42 @@ with st.sidebar:
             st.session_state[chave_falha] = str(e)[:300]
         barra.empty()
     if usar_semantica and st.session_state.get(chave_falha):
-        st.warning("Pesquisa por significado indisponível; a usar só palavras. " + st.session_state[chave_falha][:150])
-        if st.button("Tentar de novo", key="emb_retry"):
+        st.warning("⚠️ Semântica indisponível: " + st.session_state[chave_falha][:120])
+        if st.button("🔄 Tentar novamente", key="emb_retry"):
             st.session_state.pop(chave_falha, None)
             st.rerun()
-    modo_img = st.radio("👁️ A IA vê a página (imagem)", ["Auto", "Sempre", "Nunca"], horizontal=True,
+    
+    modo_img = st.radio("👁️ IA vê esquemas", ["Auto", "Sempre", "Nunca"], horizontal=True,
                         disabled=not tem_gemini,
-                        help="Auto: a IA lê a imagem da melhor página encontrada (e de páginas só com esquema). "
-                             "Sempre: lê as 2 melhores páginas. Nunca: só texto (mais rápido).") if tem_gemini else "Nunca"
-    velocidade = st.radio("⚡ Velocidade da IA", ["Rápido", "Preciso"], horizontal=True,
-                          help="Rápido: modelo mais leve. Preciso: modelo maior, mais lento. "
-                               "Compare os dois no modo Qualidade.") if tem_gemini else "Preciso"
+                        help="Auto: melhor página + esquemas. Sempre: 2 melhores. Nunca: só texto.") if tem_gemini else "Nunca"
+    
+    velocidade = st.radio("⚡ Velocidade", ["Rápido", "Preciso"], horizontal=True,
+                          help="Rápido = modelo leve. Preciso = modelo maior.") if tem_gemini else "Preciso"
     modelo_sel = config.GEMINI_MODEL_RAPIDO if (tem_gemini and velocidade == "Rápido") else None
-    reescrever = st.checkbox("Usar IA para entender perguntas curtas (mais lento)", value=False)
+    reescrever = st.checkbox("🔄 Reescrever perguntas curtas", value=False, help="Usa IA para expandir 'e agora?'")
 
+    # ---- Visualização ----
     st.divider()
-    st.markdown("**Visualização**")
+    st.markdown("**🎨 Visualização**")
     pode_traduzir = not manual.idioma.startswith("pt")
-    traduzir = st.checkbox("🌐 Traduzir esta página para PT", value=False, disabled=not pode_traduzir,
-                           help=None if pode_traduzir else "O manual já está em português.")
-    formato = st.radio("Qualidade", ["png", "svg"], format_func=lambda x: "Imagem (rápida)" if x == "png"
-                       else "Vetorial (zoom nítido)", horizontal=True)
+    traduzir = st.checkbox("🌐 Traduzir página para PT", value=False, disabled=not pode_traduzir,
+                           help=None if pode_traduzir else "Manual já está em português")
+    formato = st.radio("Qualidade", ["png", "svg"], format_func=lambda x: "⚡ Rápido (PNG)" if x == "png"
+                       else "🔮 Nítido (SVG)", horizontal=True)
 
-    # ---- importar avarias antigas (Excel / CSV)
+    # ---- Importar ----
     st.divider()
-    with st.expander("📥 Importar avarias (Excel do Manwinwin)"):
+    with st.expander("📥 Importar Avarias (Excel/CSV)"):
         if st.session_state.get("msg_imp"):
             st.success(st.session_state.pop("msg_imp"))
-        st.caption("Carregue um Excel (.xlsx) ou CSV com avarias e soluções antigas. "
-                   "A app reconhece as colunas; confirme abaixo.")
-        fich = st.file_uploader("Excel (.xlsx) ou CSV", type=["xlsx", "xlsm", "csv", "txt"], key="up_av")
+        st.caption("Carregue Excel (.xlsx) ou CSV com histórico de avarias")
+        fich = st.file_uploader("Ficheiro", type=["xlsx", "xlsm", "csv", "txt"], key="up_av", label_visibility="collapsed")
         if fich is not None:
             df_imp = None
             try:
                 df_imp = importar.ler_tabela(fich.getvalue(), fich.name)
             except Exception as e:
-                st.error(f"Não consegui ler o ficheiro: {e}")
+                st.error(f"Erro ao ler: {e}")
             if df_imp is not None:
                 colunas = [str(c) for c in df_imp.columns]
                 auto = importar.mapear_colunas(colunas)
@@ -2056,103 +2366,97 @@ with st.sidebar:
                         key=f"map_{campo}_{fich.name}_{fich.size}")
                 st.dataframe(df_imp.head(5), use_container_width=True)
                 if escolhas["avaria"] == "(nenhuma)":
-                    st.warning("Escolha a coluna com a descrição da avaria.")
-                elif st.button(f"Importar {len(df_imp)} linhas", key="btn_importar", use_container_width=True):
+                    st.warning("Selecione a coluna da avaria")
+                elif st.button(f"Importar {len(df_imp)} linhas", key="btn_importar", use_container_width=True, type="primary"):
                     novos, dup, ign = importar.importar_df(
                         df_imp, {k: (None if v == "(nenhuma)" else v) for k, v in escolhas.items()}, fich.name)
-                    st.session_state.msg_imp = (f"{novos} avarias importadas · {dup} já existiam · "
-                                                f"{ign} linhas vazias ignoradas.")
+                    st.session_state.msg_imp = f"✅ {novos} novas · 🔁 {dup} duplicadas · ⏭️ {ign} ignoradas"
                     st.rerun()
         for origem, n in importar.listar_origens():
             with st.container(horizontal=True, horizontal_alignment="space-between", gap="small"):
                 st.caption(f"📄 {origem} · {n} avarias")
-                if st.button("🗑️", key=f"del_{origem}", help="Apagar esta importação", use_container_width=False):
+                if st.button("🗑️", key=f"del_{origem}", help="Apagar importação", use_container_width=False):
                     importar.apagar_origem(origem)
                     st.rerun()
 
     st.divider()
-    if st.button("🗑️ Limpar conversa", use_container_width=True):
+    if st.button("🗑️ Limpar Conversa", use_container_width=True):
         history.apagar(utilizador, nome_manual)
         st.session_state.mensagens = []
         st.rerun()
-    if st.button("🚪 Terminar sessão", use_container_width=True):
+    if st.button("🚪 Terminar Sessão", use_container_width=True):
         st.session_state.clear()
         st.query_params.clear()
         st.rerun()
 
-    with st.expander("📊 Feedback registado"):
+    with st.expander("📊 Feedback Registado"):
         est = feedback.estatisticas()
-        st.write(f"Respostas registadas: **{est['total']}**")
+        st.markdown(f"**Total:** {est['total']}")
         for k, v in est["por_resultado"].items():
-            st.write(f"- {k}: {v}")
+            icon = {"resolveu": "✅", "parcial": "🟡", "nao_resolveu": "❌"}.get(k, "•")
+            st.write(f"{icon} {k}: {v}")
         st.download_button("⬇️ Exportar CSV", feedback.exportar_csv(), "feedback.csv", "text/csv",
                            use_container_width=True)
 
 
 # ------------------------------------------------------------------ modo qualidade
 def _mostrar_resultado(r: dict, ia: bool = False):
-    # Métricas em container horizontal responsivo
     with st.container(horizontal=True, horizontal_alignment="distribute", gap="small"):
         if ia:
-            st.metric("Cita a página certa", f"{r['hit'] * 100:.0f}%")
-            st.metric("Palavras-chave na resposta", f"{r['mrr'] * 100:.0f}%")
-            st.metric("Erros da API", r.get("erros", 0))
+            st.metric("Página Certa", f"{r['hit'] * 100:.0f}%")
+            st.metric("Palavras-chave", f"{r['mrr'] * 100:.0f}%")
+            st.metric("Erros API", r.get("erros", 0))
         else:
-            st.metric("Página certa nos trechos", f"{r['hit'] * 100:.0f}%")
-            st.metric("Posição média (MRR, 1 = ótimo)", f"{r['mrr']:.2f}")
-            st.metric("Casos medidos", r["n"])
-    st.dataframe(r["linhas"], use_container_width=True)
+            st.metric("Página nos Trechos", f"{r['hit'] * 100:.0f}%")
+            st.metric("MRR (Pos. Média)", f"{r['mrr']:.2f}")
+            st.metric("Casos Testados", r["n"])
+    st.dataframe(r["linhas"], use_container_width=True, hide_index=True)
 
 
 def pagina_qualidade():
-    st.title("🧪 Qualidade das respostas")
-    st.caption("Registe avarias reais já resolvidas, com a página do manual onde está a pista. "
-               "Repita o teste antes e depois de cada mudança para ver se melhorou ou piorou.")
+    st.title("🧪 Qualidade das Respostas")
+    st.caption("Registe avarias reais com página do manual. Teste antes/depois de mudanças.")
     testes = avaliacao.listar_testes(nome_manual)
-    with st.expander("➕ Adicionar caso de teste", expanded=not testes):
+    with st.expander("➕ Adicionar Caso de Teste", expanded=not testes):
         with st.form("novo_teste", clear_on_submit=True):
-            sint = st.text_area("Sintoma, como o técnico escreveria", height=80,
-                                placeholder="ex.: contador de vapor zerado, o tear não conta")
-            causa = st.text_input("Causa real (o que era)")
-            pag = st.number_input("Página do manual onde está a pista (0 = não sei)", 0, manual.n_paginas, 0)
-            palavras = st.text_input("Palavras-chave da solução certa, separadas por vírgula (opcional)",
-                                     placeholder="ex.: sensor, X1.3, cabo")
+            sint = st.text_area("Sintoma", height=80, placeholder="ex.: contador de vapor zerado, o tear não conta")
+            causa = st.text_input("Causa Real")
+            pag = st.number_input("Página do Manual (0 = não sei)", 0, manual.n_paginas, 0)
+            palavras = st.text_input("Palavras-chave (opcional)", placeholder="ex.: sensor, X1.3, cabo")
             eq = st.text_input("Equipamento (opcional)")
-            if st.form_submit_button("Guardar caso"):
+            if st.form_submit_button("Guardar", type="primary"):
                 if sint.strip():
                     avaliacao.adicionar_teste(nome_manual, eq, sint, causa, pag, palavras)
                     st.rerun()
                 else:
-                    st.warning("Escreva o sintoma.")
+                    st.warning("Escreva o sintoma")
     if not testes:
-        st.info("Ainda não há casos de teste para este manual. Comece com 10 a 15 avarias reais.")
+        st.info("Adicione 10-15 avarias reais para começar")
         return
-    st.markdown(f"**{len(testes)} casos de teste** neste manual")
-    st.dataframe([{"nº": t["id"], "sintoma": t["sintoma"], "causa real": t["causa_real"],
-                   "página certa": t["pagina_esperada"] or "—"} for t in testes], use_container_width=True)
-    with st.expander("🗑️ Apagar um caso"):
-        alvo = st.selectbox("Caso", [t["id"] for t in testes], format_func=lambda i: next(
-            f"{t['id']} – {t['sintoma'][:50]}" for t in testes if t["id"] == i))
-        if st.button("Apagar"):
+    st.markdown(f"**{len(testes)} casos**")
+    st.dataframe([{"nº": t["id"], "sintoma": t["sintoma"], "causa": t["causa_real"],
+                   "página": t["pagina_esperada"] or "—"} for t in testes], use_container_width=True, hide_index=True)
+    with st.expander("🗑️ Apagar Caso"):
+        alvo = st.selectbox("Caso", [t["id"] for t in testes], format_func=lambda i: next(f"{t['id']} – {t['sintoma'][:40]}" for t in testes if t["id"] == i))
+        if st.button("Apagar", type="secondary"):
             avaliacao.apagar_teste(alvo)
             st.rerun()
 
     st.divider()
-    st.markdown("#### 1) Teste da pesquisa (grátis e instantâneo)")
-    if st.button("▶️ Testar pesquisa", use_container_width=True):
-        res = {"Só palavras": avaliacao.avaliar_recuperacao(indice, testes, config.TOP_CHUNKS_MANUAL, False)}
-        avaliacao.registar_execucao(nome_manual, "pesquisa: só palavras", res["Só palavras"])
+    st.markdown("#### 1️⃣ Teste de Pesquisa (Instantâneo)")
+    if st.button("▶️ Executar", use_container_width=True, type="primary"):
+        res = {"Só Palavras": avaliacao.avaliar_recuperacao(indice, testes, config.TOP_CHUNKS_MANUAL, False)}
+        avaliacao.registar_execucao(nome_manual, "pesquisa: só palavras", res["Só Palavras"])
         if usar_semantica and indice.matriz is not None:
-            res["Palavras + significado"] = avaliacao.avaliar_recuperacao(
-                indice, testes, config.TOP_CHUNKS_MANUAL, True)
-            avaliacao.registar_execucao(nome_manual, "pesquisa: palavras + significado", res["Palavras + significado"])
+            res["Semântico"] = avaliacao.avaliar_recuperacao(indice, testes, config.TOP_CHUNKS_MANUAL, True)
+            avaliacao.registar_execucao(nome_manual, "pesquisa: semântico", res["Semântico"])
         st.session_state.res_pesquisa = res
     for titulo, r in st.session_state.get("res_pesquisa", {}).items():
         st.markdown(f"**{titulo}**")
         _mostrar_resultado(r)
 
-    st.markdown("#### 2) Teste com a IA (usa a API: 1 pedido por caso)")
-    if st.button(f"▶️ Testar com a IA ({len(testes)} pedidos)", use_container_width=True, disabled=not ok_llm):
+    st.markdown("#### 2️⃣ Teste com IA (1 pedido/caso)")
+    if st.button(f"▶️ Testar IA ({len(testes)} casos)", use_container_width=True, disabled=not ok_llm, type="primary"):
         barra = st.progress(0.0, text="A testar...")
         r = avaliacao.avaliar_com_ia(testes, manual, indice, base, usar_semantica,
                                      lambda msgs: llm.gerar(msgs, modelo=modelo_sel),
@@ -2165,8 +2469,8 @@ def pagina_qualidade():
 
     hist = avaliacao.listar_execucoes(nome_manual)
     if hist:
-        st.markdown("#### Histórico de testes")
-        st.dataframe(hist, use_container_width=True)
+        st.markdown("#### Histórico")
+        st.dataframe(hist, use_container_width=True, hide_index=True)
 
 
 if modo == "🧪 Qualidade":
@@ -2194,18 +2498,25 @@ def _pouco_texto(p: int) -> bool:
 
 
 pergunta = st.chat_input(
-    "Descreva o problema (ex.: 'erro -999 na sonda do tear 3; já medi a continuidade e está boa')",
-    submit_mode="disable"  # Disable input while response is streaming
+    "Descreva o problema (ex.: 'erro -999 na sonda do tear 3; já medi continuidade')",
+    submit_mode="disable"
 )
 
-# Layout responsivo: usa container horizontal que empilha no mobile
-# No desktop: chat à esquerda, esquema à direita
-# No mobile: empilha verticalmente (chat em cima, esquema embaixo)
-with st.container(horizontal=True, horizontal_alignment="distribute", gap="medium") as layout_cols:
-    # Painel esquerdo: Chat (Diagnóstico)
+# ===== LAYOUT PRINCIPAL RESPONSIVO =====
+with st.container(horizontal=True, horizontal_alignment="distribute", gap="medium"):
+    # --- PAINEL ESQUERDO: CHAT ---
     with st.container(border=True):
-        st.subheader("💬 Diagnóstico")
-        st.caption("O assistente apenas **sugere**. Valide sempre no esquema e siga o procedimento de segurança.")
+        st.markdown("### 💬 Diagnóstico")
+        st.caption("O assistente **sugere** · Valide no esquema · Siga procedimentos de segurança")
+        
+        if not mensagens:
+            st.markdown("""
+            <div style="text-align:center;padding:3rem 1rem;color:var(--text-muted);">
+              <div style="font-size:3rem;margin-bottom:1rem;">💬</div>
+              <p style="font-size:1.1rem;margin-bottom:0.5rem;">Nenhuma conversa ainda</p>
+              <p style="font-size:0.9rem;">Descreva um sintoma para começar</p>
+            </div>
+            """, unsafe_allow_html=True)
         
         for i, msg in enumerate(mensagens):
             with st.chat_message(msg["role"]):
@@ -2219,34 +2530,35 @@ with st.container(horizontal=True, horizontal_alignment="distribute", gap="mediu
                 if msg.get("aviso"):
                     st.warning(diagnosis.AVISO_SEGURANCA)
                 if msg.get("paginas_img"):
-                    st.caption("👁️ A IA viu também como imagem: " + ", ".join(f"p.{p}" for p in msg["paginas_img"]))
+                    st.caption("👁️ IA analisou: " + ", ".join(f"p.{p}" for p in msg["paginas_img"]))
                 if msg.get("paginas"):
-                    # Botões de página responsivos
                     paginas_mostrar = msg["paginas"][:5]
                     cols_pag = st.columns(len(paginas_mostrar) + 1)
                     cols_pag[0].caption("Abrir:")
                     for c, p in zip(cols_pag[1:], paginas_mostrar):
                         c.button(f"📄 p.{p}", key=f"pg_{i}_{p}", on_click=_ir_pagina, args=(p,), use_container_width=True)
                 if msg.get("casos"):
-                    with st.expander(f"📚 {len(msg['casos'])} casos parecidos já resolvidos"):
+                    with st.expander(f"📚 {len(msg['casos'])} casos semelhantes"):
                         for c in msg["casos"]:
-                            st.markdown(f"**{c['id']}** · {c['data']} · {c['equipamento']}  \n"
-                                        f"Avaria: {c['avaria']}  \nCausa: {c['causa'] or '—'}  \n"
-                                        f"Solução: {c['solucao'] or '—'}")
-                # --- feedback
+                            st.markdown(f"""
+                            **{c['id']}** · {c['data']} · {c['equipamento']}  
+                            Avaria: {c['avaria']}  
+                            Causa: {c['causa'] or '—'}  
+                            Solução: {c['solucao'] or '—'}
+                            """)
+                # --- feedback ---
                 if msg.get("fb_id"):
                     if msg.get("avaliacao"):
-                        rot = {"resolveu": "✅ resolveu", "parcial": "🟡 ajudou em parte", "nao_resolveu": "❌ não resolveu"}
+                        rot = {"resolveu": "✅ Resolveu", "parcial": "🟡 Parcial", "nao_resolveu": "❌ Não resolveu"}
                         st.caption(f"Avaliação: {rot[msg['avaliacao']]}")
                     else:
                         pend = st.session_state.get("fb_pendente")
                         if pend and pend[0] == i:
                             with st.form(f"fbf_{i}"):
-                                st.markdown("**O que foi realmente?** (ajuda os colegas e melhora o sistema)")
+                                st.markdown("**O que foi realmente?** (melhora o sistema)")
                                 causa = st.text_input("Causa real", key=f"causa_{i}")
-                                solucao = st.text_area("O que fez para resolver", key=f"sol_{i}", height=80)
-                                ok = st.form_submit_button("Guardar avaliação", use_container_width=True)
-                                if ok:
+                                solucao = st.text_area("Solução aplicada", key=f"sol_{i}", height=80)
+                                if st.form_submit_button("Guardar", use_container_width=True, type="primary"):
                                     feedback.avaliar(msg["fb_id"], pend[1], causa, solucao)
                                     msg["avaliacao"] = pend[1]
                                     st.session_state.pop("fb_pendente", None)
@@ -2255,17 +2567,17 @@ with st.container(horizontal=True, horizontal_alignment="distribute", gap="mediu
                         else:
                             b1, b2, b3 = st.columns(3)
                             for col, (res, rot) in zip((b1, b2, b3), (("resolveu", "✅ Resolveu"),
-                                                                  ("parcial", "🟡 Em parte"),
-                                                                  ("nao_resolveu", "❌ Não resolveu"))):
+                                                                       ("parcial", "🟡 Parcial"),
+                                                                       ("nao_resolveu", "❌ Não resolveu"))):
                                 if col.button(rot, key=f"fb_{res}_{i}", use_container_width=True):
                                     st.session_state.fb_pendente = (i, res)
                                     st.rerun()
 
-    # Painel direito: Esquema / Manual
+    # --- PAINEL DIREITO: ESQUEMA ---
     with st.container(border=True):
-        st.subheader("📐 Esquema / Manual")
+        st.markdown("### 📐 Esquema / Manual")
         
-        # Navegação de página responsiva
+        # Navegação de página
         n = manual.n_paginas
         st.session_state.pagina = min(max(int(st.session_state.get("pagina", 1)), 1), n)
         c1, c2, c3 = st.columns([1, 2, 1], vertical_alignment="center")
@@ -2277,130 +2589,104 @@ with st.container(horizontal=True, horizontal_alignment="distribute", gap="mediu
         
         pag = st.session_state.pagina
         if pag in manual.paginas_sem_texto:
-            st.caption("Esta página não tem texto extraível (só desenho): "
-                       + ("a IA vê-a como imagem." if tem_gemini and modo_img != "Nunca" else "a IA não a consegue ler, mas pode vê-la aqui."))
+            st.caption("📄 Página só com desenho: " + 
+                       ("IA analisa como imagem" if tem_gemini and modo_img != "Nunca" else "IA não lê, mas pode ver aqui"))
         try:
-            with st.spinner("A preparar a página..." + (" (a traduzir)" if traduzir else "")):
+            with st.spinner("A preparar página..." + (" 🌐 Traduzindo" if traduzir else "")):
                 dados, mime, blocos = _pagina_renderizada(
                     str(manual.caminho), manual.hash, pag, config.ZOOM_RENDER, formato,
                     bool(traduzir and pode_traduzir), manual.idioma, config.LLM_PROVIDER)
             
-            # Altura responsiva do viewer: 640px desktop, 400px mobile (via CSS)
-            viewer_height = 640
+            viewer_height = 600
             components.html(viewer.html_visualizador(dados, mime, viewer_height), height=viewer_height + 10)
             
             if blocos:
-                with st.expander("Texto traduzido desta página"):
+                with st.expander("🌐 Texto Traduzido"):
                     for b in blocos:
                         st.markdown(f"- {b['texto']}  →  **{b.get('traducao', '')}**")
         except Exception as e:
-            st.error(f"Não consegui mostrar a página: {e}")
+            st.error(f"Erro ao mostrar página: {e}")
 
-    # --------------------------------------------------------------- nova pergunta
-    if pergunta:
-                    pend = st.session_state.get("fb_pendente")
-                    if pend and pend[0] == i:
-                        with st.form(f"fbf_{i}"):
-                            st.markdown("**O que foi realmente?** (ajuda os colegas e melhora o sistema)")
-                            causa = st.text_input("Causa real", key=f"causa_{i}")
-                            solucao = st.text_area("O que fez para resolver", key=f"sol_{i}", height=80)
-                            ok = st.form_submit_button("Guardar avaliação")
-                            if ok:
-                                feedback.avaliar(msg["fb_id"], pend[1], causa, solucao)
-                                msg["avaliacao"] = pend[1]
-                                st.session_state.pop("fb_pendente", None)
-                                _guardar()
-                                st.rerun()
-                    else:
-                        b1, b2, b3 = st.columns(3)
-                        for col, (res, rot) in zip((b1, b2, b3), (("resolveu", "✅ Resolveu"),
-                                                                 ("parcial", "🟡 Em parte"),
-                                                                 ("nao_resolveu", "❌ Não resolveu"))):
-                            if col.button(rot, key=f"fb_{res}_{i}", use_container_width=True):
-                                st.session_state.fb_pendente = (i, res)
-                                st.rerun()
+# --------------------------------------------------------------- nova pergunta
+if pergunta:
+    with st.chat_message("user"):
+        st.markdown(pergunta)
+    hist_antes = list(mensagens)
+    mensagens.append({"role": "user", "content": pergunta})
+    estado_img = {"paginas": []}
 
-    # --------------------------------------------------------------- nova pergunta
-    if pergunta:
-        with st.chat_message("user"):
-            st.markdown(pergunta)
-        hist_antes = list(mensagens)
-        mensagens.append({"role": "user", "content": pergunta})
-        estado_img = {"paginas": []}
-
-        def escolher_imagens(trechos):
-            """A IA lê a imagem da melhor página encontrada (e de páginas só com esquema); máx. 2."""
-            paginas = diagnosis.escolher_paginas_imagem(int(st.session_state.pagina), trechos, manual.textos, modo_img)
-            imgs, ok_pags = [], []
-            for p in paginas:
-                try:
-                    imgs.append(("image/png", _imagem_para_ia(str(manual.caminho), p)))
-                    ok_pags.append(p)
-                except Exception:
-                    pass
-            estado_img["paginas"] = ok_pags
-            return imgs, ok_pags
-
-        with st.chat_message("assistant"):
-            t0 = time.time()
-            with st.spinner("A ver as palavras da pergunta e a procurar no manual..."):
-                msgs, trechos, casos = diagnosis.preparar(
-                    pergunta, hist_antes, manual, indice, base, equipamento, semantica=usar_semantica,
-                    usar_llm_reescrita=reescrever and ok_llm, escolher_imagens=escolher_imagens)
-            t_busca = time.time() - t0
-            paginas_busca = []
-            for ch, _ in trechos:
-                if ch.meta["pagina"] not in paginas_busca:
-                    paginas_busca.append(ch.meta["pagina"])
-            palavras, extra = textutil.palavras_chave(pergunta)
-            busca_txt = ("🔎 Procurei: " + " · ".join(palavras)
-                         + (f"  (+ {', '.join(extra)})" if extra else "")
-                         + (" → encontrei nas páginas " + ", ".join(f"p.{p}" for p in paginas_busca[:4])
-                            if paginas_busca else " → nada encontrado no manual"))
-            st.caption(busca_txt)
-            casos_resumo = [{"id": c.id, "data": c.data,
-                             "equipamento": c.equipamento, "avaria": c.avaria, "causa": c.causa,
-                             "solucao": c.solucao} for c, _ in casos]
-            t_llm = time.time()
-            marcas = {}
-
-            def _fluxo():
-                for parte in llm.gerar_stream(msgs, modelo=modelo_sel):
-                    marcas.setdefault("primeira", time.time() - t_llm)
-                    yield parte
-
+    def escolher_imagens(trechos):
+        paginas = diagnosis.escolher_paginas_imagem(int(st.session_state.pagina), trechos, manual.textos, modo_img)
+        imgs, ok_pags = [], []
+        for p in paginas:
             try:
-                resposta = st.write_stream(_fluxo())
-                erro = None
-            except llm.LLMErro as e:
-                resposta, erro = "", str(e)
+                imgs.append(("image/png", _imagem_para_ia(str(manual.caminho), p)))
+                ok_pags.append(p)
+            except Exception:
+                pass
+        estado_img["paginas"] = ok_pags
+        return imgs, ok_pags
 
-            if erro or not resposta.strip():
-                excertos = "\n\n".join(
-                    f"**[Manual p.{c.meta['pagina']}]** {c.texto[:400]}…" for c, _ in trechos[:3]) or "(nada encontrado no manual)"
-                resposta = ("⚠️ A IA está temporariamente indisponível (" + (erro or "resposta vazia")[:160] + "). "
-                            "Tente de novo daqui a alguns segundos. Entretanto, isto é o que encontrei no manual:\n\n" + excertos)
-                st.markdown(resposta)
+    with st.chat_message("assistant"):
+        t0 = time.time()
+        with st.spinner("🔍 A pesquisar no manual..."):
+            msgs, trechos, casos = diagnosis.preparar(
+                pergunta, hist_antes, manual, indice, base, equipamento, semantica=usar_semantica,
+                usar_llm_reescrita=reescrever and ok_llm, escolher_imagens=escolher_imagens)
+        t_busca = time.time() - t0
+        paginas_busca = []
+        for ch, _ in trechos:
+            if ch.meta["pagina"] not in paginas_busca:
+                paginas_busca.append(ch.meta["pagina"])
+        palavras, extra = textutil.palavras_chave(pergunta)
+        busca_txt = ("🔎 Procurei: " + " · ".join(palavras)
+                     + (f"  (+ {', '.join(extra)})" if extra else "")
+                     + (" → páginas " + ", ".join(f"p.{p}" for p in paginas_busca[:4])
+                        if paginas_busca else " → nada encontrado"))
+        st.caption(busca_txt)
+        casos_resumo = [{"id": c.id, "data": c.data,
+                         "equipamento": c.equipamento, "avaria": c.avaria, "causa": c.causa,
+                         "solucao": c.solucao} for c, _ in casos]
+        t_llm = time.time()
+        marcas = {}
 
-            t_total = t_busca + (time.time() - t_llm)
-            info = f"⏱ pesquisa {t_busca:.1f}s · 1.ª palavra {marcas.get('primeira', 0) + t_busca:.1f}s · total {t_total:.1f}s"
-            info_llm = llm.ultimo_info() or {}
-            if info_llm.get("modelo"):
-                info += f" · {info_llm['modelo']}" + (f" (depois de {info_llm['falhas']} falhas)" if info_llm.get("falhas") else "")
-            if estado_img["paginas"]:
-                info += f" · {len(estado_img['paginas'])} imagem(ns)"
-            st.caption(info)
-            citadas = diagnosis.paginas_citadas(resposta, manual.n_paginas)
-            paginas = citadas or paginas_busca[:3]
-            falhou = bool(erro) or resposta.startswith("⚠️")
-            fb_id = None if falhou else feedback.registar_resposta(
-                utilizador, manual.nome, equipamento, pergunta, resposta, paginas, [c["id"] for c in casos_resumo])
-            mensagens.append({
-                "role": "assistant", "content": resposta, "paginas": paginas, "casos": casos_resumo,
-                "fb_id": fb_id, "aviso": diagnosis.precisa_aviso_seguranca(resposta),
-                "paginas_img": estado_img["paginas"], "busca": busca_txt, "info": info,
-            })
-            if paginas:   # aplicado no início da próxima execução (o widget já foi criado nesta)
-                st.session_state.pagina_pendente = paginas[0]
-            _guardar()
-        st.rerun()
+        def _fluxo():
+            for parte in llm.gerar_stream(msgs, modelo=modelo_sel):
+                marcas.setdefault("primeira", time.time() - t_llm)
+                yield parte
+
+        try:
+            resposta = st.write_stream(_fluxo())
+            erro = None
+        except llm.LLMErro as e:
+            resposta, erro = "", str(e)
+
+        if erro or not resposta.strip():
+            excertos = "\n\n".join(
+                f"**[Manual p.{c.meta['pagina']}]** {c.texto[:400]}…" for c, _ in trechos[:3]) or "(nada encontrado)"
+            resposta = ("⚠️ IA indisponível (" + (erro or "resposta vazia")[:120] + "). "
+                        "Tente novamente. Encontrei no manual:\n\n" + excertos)
+            st.markdown(resposta)
+
+        t_total = t_busca + (time.time() - t_llm)
+        info = f"⏱ {t_busca:.1f}s busca · {marcas.get('primeira', 0) + t_busca:.1f}s 1ª palavra · {t_total:.1f}s total"
+        info_llm = llm.ultimo_info() or {}
+        if info_llm.get("modelo"):
+            info += f" · {info_llm['modelo']}" + (f" ({info_llm['falhas']} falhas)" if info_llm.get("falhas") else "")
+        if estado_img["paginas"]:
+            info += f" · {len(estado_img['paginas'])} imagem(ns)"
+        st.caption(info)
+        citadas = diagnosis.paginas_citadas(resposta, manual.n_paginas)
+        paginas = citadas or paginas_busca[:3]
+        falhou = bool(erro) or resposta.startswith("⚠️")
+        fb_id = None if falhou else feedback.registar_resposta(
+            utilizador, manual.nome, equipamento, pergunta, resposta, paginas, [c["id"] for c in casos_resumo])
+        mensagens.append({
+            "role": "assistant", "content": resposta, "paginas": paginas, "casos": casos_resumo,
+            "fb_id": fb_id, "aviso": diagnosis.precisa_aviso_seguranca(resposta),
+            "paginas_img": estado_img["paginas"], "busca": busca_txt, "info": info,
+        })
+        if paginas:
+            st.session_state.pagina_pendente = paginas[0]
+        _guardar()
+    st.rerun()
