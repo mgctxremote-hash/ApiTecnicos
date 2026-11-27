@@ -2099,7 +2099,7 @@ with st.sidebar:
 # ------------------------------------------------------------------ modo qualidade
 def _mostrar_resultado(r: dict, ia: bool = False):
     # Métricas em container horizontal responsivo
-    with st.container(horizontal=True, horizontal_alignment="stretch", gap="small"):
+    with st.container(horizontal=True, horizontal_alignment="distribute", gap="small"):
         if ia:
             st.metric("Cita a página certa", f"{r['hit'] * 100:.0f}%")
             st.metric("Palavras-chave na resposta", f"{r['mrr'] * 100:.0f}%")
@@ -2208,7 +2208,7 @@ pergunta = st.chat_input(
 # Layout responsivo: usa container horizontal que empilha no mobile
 # No desktop: chat à esquerda (5/11), esquema à direita (6/11)
 # No mobile: empilha verticalmente (chat em cima, esquema embaixo)
-with st.container(horizontal=True, horizontal_alignment="stretch", gap="medium") as layout_cols:
+with st.container(horizontal=True, horizontal_alignment="distribute", gap="medium") as layout_cols:
     # Painel esquerdo: Chat (Diagnóstico)
     with st.container(border=True):
         st.subheader("💬 Diagnóstico")
